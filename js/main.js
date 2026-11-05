@@ -19,7 +19,7 @@ const w = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
 const H = { canal: 0.2, ns: 0.6, ew: 1.0, hatch: 1.6, outline: 2.0, node: 2.4, route: 3.2 };
 
 const COLORS = {
-  waiting: 0xeab308, riding: 0x10b981, docked: 0x6366f1, stranded: 0xe11d8f,
+  waiting: 0xeab308, riding: 0x10b981, docked: 0x6366f1, stranded: 0xe11d8f, fallen: 0xdc2626,
   station: 0xf97316, stationOff: 0x9ca3af, sensor: 0x7c3aed,
   basin: 0x334155, basinClog: 0xb45309, glow: 0x34d399, glowCore: 0x059669,
   tool: 0x06b6d4, dry: 0x1e293b,
@@ -355,16 +355,23 @@ function riderView(r) {
   g.add(proxy);
   addPick(proxy, 'rider', r.id);
   riderGroup.add(g);
+  // Ripple under a rider who has fallen into the water
+  const splash = new THREE.Mesh(new THREE.RingGeometry(20, 30, 28).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.6, depthWrite: false }));
+  splash.position.y = 3;
+  splash.visible = false;
+  riderGroup.add(splash);
+  g.userData.splash = splash;
   const outer = makeLine([{ x: 0, y: 0 }, { x: 1, y: 0 }], lineMat({ color: COLORS.glow, linewidth: 12, transparent: true, opacity: 0.35, depthWrite: false }), H.route);
   const inner = makeLine([{ x: 0, y: 0 }, { x: 1, y: 0 }], lineMat({ color: COLORS.glowCore, linewidth: 3.5, depthWrite: false }), H.route + 0.2);
   outer.renderOrder = 5; inner.renderOrder = 6;
   outer.visible = inner.visible = false;
   routeGroup.add(outer, inner);
-  return { group: g, mat, proxy, outer, inner, state: r.state, routeKey: null };
+  return { group: g, mat, proxy, outer, inner, splash, state: r.state, routeKey: null };
 }
 function dropRiderView(id) {
   const v = riderViews.get(id);
-  riderGroup.remove(v.group);
+  riderGroup.remove(v.group, v.splash);
   routeGroup.remove(v.outer, v.inner);
   v.outer.geometry.dispose(); v.inner.geometry.dispose();
   const i = pickables.indexOf(v.proxy);
@@ -446,7 +453,14 @@ function syncScene() {
     if (!v) { v = riderView(r); riderViews.set(r.id, v); }
     const p = model.riderPosition(r);
     v.group.position.copy(w(p.x, p.y, 0));
-    if (v.state !== r.state) { v.state = r.state; v.mat.color.set(COLORS[r.state]); v.mat.emissive.set(COLORS[r.state]); }
+    v.splash.position.set(v.group.position.x, 3, v.group.position.z);
+    if (v.state !== r.state) {
+      v.state = r.state;
+      v.mat.color.set(COLORS[r.state]); v.mat.emissive.set(COLORS[r.state]);
+      v.group.rotation.z = r.state === 'fallen' ? 1.4 : 0; // knocked over
+      v.splash.visible = r.state === 'fallen';
+    }
+    if (v.splash.visible) v.splash.scale.setScalar(1 + 0.25 * Math.sin(performance.now() / 180));
     // Glowing route for riders who are riding, and for the selected rider.
     const show = r.route && (r.state === 'riding' || (selected?.kind === 'rider' && selected.id === r.id));
     if (!show) { v.outer.visible = v.inner.visible = false; v.routeKey = null; continue; }
@@ -462,6 +476,21 @@ function syncScene() {
     }
   }
   updateRing();
+  updateDestMarker();
+}
+
+// A marker over the selected rider's destination station
+const destMarker = new THREE.Mesh(new THREE.ConeGeometry(14, 34, 16).rotateX(Math.PI),
+  new THREE.MeshStandardMaterial({ color: COLORS.tool, emissive: COLORS.tool, emissiveIntensity: 0.4 }));
+destMarker.visible = false;
+scene.add(destMarker);
+function updateDestMarker() {
+  const r = selected?.kind === 'rider' ? model.riders.get(selected.id) : null;
+  const st = r && r.route && model.stations.get(r.destination);
+  destMarker.visible = !!st;
+  if (!st) return;
+  const top = st.capacity * BIKE_FT + 30;
+  destMarker.position.copy(w(st.x, st.y, top + 6 * Math.sin(performance.now() / 250)));
 }
 
 function updateRing() {
@@ -540,8 +569,10 @@ const stName = (id) => model.stations.get(id)?.name || '—';
 
 function renderInspector() {
   const kindEl = $('insp-kind'), body = $('insp-body');
+  const actions = $('insp-actions');
   $('insp-close').hidden = !selected;
   if (!selected) {
+    actions.innerHTML = '';
     kindEl.textContent = 'Select something';
     body.innerHTML = '<p class="muted">Click a street, intersection, station, rider, catch basin or flood sensor to see its attributes.</p>';
     return;
@@ -605,6 +636,8 @@ function renderInspector() {
     row('Position', xy(model.riderPosition(r)));
     row('Origin', esc(stName(r.origin)));
     row('Destination', esc(stName(r.destination)));
+    if (r.state === 'fallen') row('Status', `fell in ${model.segments.get(r.loc.seg).depth.toFixed(1)} in of water, back up in ${Math.ceil(r.timer)} s`);
+    row('Falls', r.falls);
     if (r.route) {
       row('Route', `${r.route.segments.length} segments`);
       row('Flood-avoiding', ft(r.route.distance));
@@ -615,7 +648,14 @@ function renderInspector() {
       row('Route', r.state === 'stranded' ? 'none: waiting for a street to open' : '—');
     }
   }
+  let extra = '';
+  if (kind === 'rider') {
+    const sending = send.rider === id;
+    extra = `<button class="send" data-act="send"${model.riders.get(id).state === 'fallen' ? ' disabled' : ''}>${sending ? 'Cancel send' : 'Send to a station…'}</button>`;
+  }
   body.innerHTML = `<table>${rows.join('')}</table>`;
+  // Keep the button element stable so clicks aren't lost when the table refreshes.
+  if (actions.innerHTML !== extra) actions.innerHTML = extra;
 }
 
 function renderLog() {
@@ -647,6 +687,8 @@ function updateButtons() {
   $('btn-play').classList.toggle('active', playing);
   $('btn-route').classList.toggle('active', tool.active);
   $('btn-remove').disabled = selected?.kind !== 'rider';
+  $('btn-send').disabled = selected?.kind !== 'rider' && !send.rider;
+  $('btn-send').classList.toggle('active', !!send.rider);
   const b = selected?.kind === 'basin' ? model.basins.get(selected.id) : null;
   $('btn-basin').disabled = !b;
   $('btn-basin').textContent = b?.status === 'clogged' ? 'Clear basin' : 'Clog basin';
@@ -656,6 +698,7 @@ function updateButtons() {
 
 function setHint() {
   const h = $('hint');
+  if (send.rider) { h.hidden = false; h.textContent = `Click a station to send ${send.rider} there (Esc to cancel)`; return; }
   if (!tool.active) { h.hidden = true; return; }
   h.hidden = false;
   h.textContent = !tool.origin ? 'Click an origin station' : !tool.dest ? 'Now click a destination station' : 'Click another station to start a new route';
@@ -707,7 +750,48 @@ $('btn-refresh').onclick = async () => {
   updateButtons();
 };
 
+// ---------- send a rider ----------
+const send = { rider: null };
+function startSend(id) {
+  send.rider = send.rider === id ? null : id;
+  if (send.rider && tool.active) { tool.active = false; clearTool(); }
+  renderInspector();
+  updateButtons();
+}
+function finishSend(stationId) {
+  const r = model.riders.get(send.rider);
+  const res = model.dispatch(r, stationId);
+  send.rider = null;
+  model.alerts.length = 0; // dispatch's own result is shown below
+  toast(res.kind, res.msg);
+  if (r) select({ kind: 'rider', id: r.id });
+  updateButtons();
+}
+$('btn-send').onclick = () => {
+  if (send.rider) startSend(send.rider);
+  else if (selected?.kind === 'rider') startSend(selected.id);
+};
+$('insp-actions').addEventListener('click', (e) => {
+  if (e.target.closest('[data-act="send"]') && selected?.kind === 'rider') startSend(selected.id);
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && send.rider) { send.rider = null; renderInspector(); updateButtons(); }
+});
+
+// Pop-up messages (dock full, falls). Newest on top, each fades after a few seconds.
+function toast(kind, msg) {
+  const box = $('toasts');
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  el.textContent = msg;
+  box.prepend(el);
+  while (box.children.length > 4) box.lastChild.remove();
+  setTimeout(() => { el.classList.add('gone'); setTimeout(() => el.remove(), 400); }, kind === 'ok' ? 4000 : 7000);
+}
+
 $('btn-route').onclick = () => {
+  if (send.rider) send.rider = null;
   tool.active = !tool.active;
   if (!tool.active) clearTool();
   updateButtons();
@@ -721,6 +805,7 @@ $('btn-add').onclick = () => {
 
 $('btn-remove').onclick = () => {
   if (selected?.kind !== 'rider') return;
+  if (send.rider === selected.id) send.rider = null;
   model.removeRider(selected.id);
   model.log(`${selected.id} removed`);
   select(null);
@@ -758,7 +843,9 @@ $('btn-reset').onclick = () => {
   buildStations();
   buildSensors();
   tool.active = false;
+  send.rider = null;
   clearTool();
+  model.alerts.length = 0;
   select(null);
   updateButtons();
 };
@@ -788,6 +875,11 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) return;
   down = null;
   const p = pickAt(e);
+  if (send.rider) {
+    if (p?.kind === 'station') finishSend(p.id);
+    else if (p?.kind === 'rider') { send.rider = p.id; select(p); }
+    return;
+  }
   if (tool.active) {
     if (p?.kind !== 'station') return;
     if (!tool.origin || tool.dest) { clearTool(); tool.origin = p.id; select(p); }
@@ -805,7 +897,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   const p = pickAt(e);
   if (!p) { tip.hidden = true; renderer.domElement.style.cursor = ''; return; }
   const name = {
-    rider: () => `Rider ${p.id} · ${model.riders.get(p.id)?.state}`,
+    rider: () => { const r = model.riders.get(p.id); return `Rider ${p.id} · ${r?.state}${r?.falls ? ` · ${r.falls} fall${r.falls > 1 ? 's' : ''}` : ''}`; },
     station: () => { const s = model.stations.get(p.id); return `${s.name} · ${s.bikes} bikes, ${s.docks} docks`; },
     basin: () => `Catch basin ${p.id} · ${model.basins.get(p.id).status}`,
     sensor: () => { const s = model.sensors.get(p.id); return `Sensor ${s.name} · ${s.depth.toFixed(1)}″`; },
@@ -858,6 +950,8 @@ function frame(now) {
   uiTimer += dt;
   if (uiTimer > 0.25) {
     uiTimer = 0;
+    for (const a of model.alerts.splice(0)) toast(a.kind, a.msg);
+    if (send.rider && !model.riders.has(send.rider)) send.rider = null;
     if (selected) {
       const gone = (selected.kind === 'rider' && !model.riders.has(selected.id)) || (selected.kind === 'station' && !model.stations.has(selected.id));
       if (gone) select(null); else renderInspector();
@@ -890,8 +984,8 @@ async function start() {
   requestAnimationFrame(frame);
   // Handy for poking at the model from the browser console.
   window.__model = model;
-  window.__toScreen = (x, y) => {
-    const v = w(x, y, 10).project(camera);
+  window.__toScreen = (x, y, h = 10) => {
+    const v = w(x, y, h).project(camera);
     return { x: ((v.x + 1) / 2) * window.innerWidth, y: ((1 - v.y) / 2) * window.innerHeight };
   };
 }

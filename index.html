@@ -29,6 +29,7 @@
     </div>
     <div class="group">
       <button id="btn-route" title="Click an origin station, then a destination station">Find route</button>
+      <button id="btn-send" title="Select a rider, then click a station to send them there" disabled>Send rider</button>
       <button id="btn-add" title="Add a rider at a random open station">Add rider</button>
       <button id="btn-remove" title="Remove the selected rider" disabled>Remove rider</button>
       <button id="btn-basin" title="Clog or clear the selected catch basin" disabled>Clog basin</button>
@@ -43,6 +44,7 @@
 
   <div id="notice" hidden></div>
   <div id="hint" hidden></div>
+  <div id="toasts" aria-live="polite"></div>
 
   <aside id="inspector" aria-live="polite">
     <div class="panel-head">
@@ -52,6 +54,7 @@
     <div id="insp-body">
       <p class="muted">Click a street, intersection, station, rider, catch basin or flood sensor to see its attributes.</p>
     </div>
+    <div id="insp-actions"></div>
     <details id="log-wrap" open>
       <summary>Rule log</summary>
       <ol id="log"></ol>
@@ -69,6 +72,7 @@
         <li><b class="sw station-off"></b>Flooded station</li>
         <li><b class="dot waiting"></b>Waiting <b class="dot riding"></b>Riding</li>
         <li><b class="dot docked"></b>Docked <b class="dot stranded"></b>Stranded</li>
+        <li><b class="dot fallen"></b>Fell off (water over 3″)</li>
         <li><b class="sw basin"></b>Basin <b class="sw basin-clog"></b>Clogged</li>
         <li><b class="dot sensor"></b>Flood sensor</li>
       </ul>

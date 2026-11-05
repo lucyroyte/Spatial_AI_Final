@@ -65,11 +65,35 @@ function parseFloodNet(json) {
   return out;
 }
 
+// Live FloodNet: sensors near the study area, each with its latest depth reading.
+async function liveFloodNet() {
+  const json = await fetchJSON(DATA.floodnet);
+  const b = bbox(), pad = 0.003; // about 1,000 ft around the study area
+  const near = (json.deployments || []).filter((d) => {
+    const [lon, lat] = d.location?.coordinates || [];
+    return !d.date_down && lat > b.s - pad && lat < b.n + pad && lon > b.w - pad && lon < b.e + pad;
+  });
+  if (!near.length) throw new Error('No FloodNet sensors near the study area');
+  const iso = (t) => t.toISOString().slice(0, 19);
+  const end = new Date(), start = new Date(end - DATA.floodnetWindowMin * 6e4);
+  return Promise.all(near.map(async (d) => {
+    let depth_mm = 0;
+    try {
+      const r = await fetchJSON(DATA.floodnetDepth(d.deployment_id, iso(start), iso(end)));
+      const rows = r.depth_data || [];
+      if (rows.length) depth_mm = +rows[rows.length - 1].depth_proc_mm || 0;
+    } catch (err) {
+      console.warn('FloodNet depth failed for', d.deployment_id, err);
+    }
+    return { id: d.deployment_id, name: d.name, lat: d.location.coordinates[1], lon: d.location.coordinates[0], depth_mm };
+  }));
+}
+
 export function loadFloodNet() {
   return withFallback(
     async () => {
       if (!DATA.floodnet) throw new Error('FloodNet endpoint not configured');
-      return parseFloodNet(await fetchJSON(DATA.floodnet));
+      return parseFloodNet(await liveFloodNet());
     },
     async () => parseFloodNet(await fetchJSON(DATA.samples.floodnet)),
   );

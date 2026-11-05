@@ -1,47 +1,45 @@
 {
-  "_note": "Bundled sample FloodNet-style readings for offline use. Readings are illustrative, not live.",
+  "_note": "Snapshot of live FloodNet readings for the study area, taken 2026-11-05. Used only when the live API cannot be reached.",
   "sensors": [
     {
-      "id": "sample-fn-carroll-bridge",
-      "name": "Carroll St Bridge",
-      "lat": 40.678004,
-      "lon": -73.989987,
-      "depth_in": 0
+      "id": "daily_new_falcon",
+      "name": "BK - Hoyt St/5th St",
+      "lat": 40.67667202,
+      "lon": -73.99459095,
+      "depth_mm": 274,
+      "time": "2026-11-05T02:58:44.601+00:00"
     },
     {
-      "id": "sample-fn-bond-2st",
-      "name": "Bond St & 2 St",
-      "lat": 40.677082,
-      "lon": -73.991941,
-      "depth_in": 1.8
+      "id": "overly_heroic_squid",
+      "name": "BK - 9th St/Smith St",
+      "lat": 40.673401,
+      "lon": -73.994892,
+      "depth_mm": 0,
+      "time": "2026-11-05T03:00:19.269+00:00"
     },
     {
-      "id": "sample-fn-nevins-3st",
-      "name": "Nevins St & 3 St",
-      "lat": 40.675739,
-      "lon": -73.989781,
-      "depth_in": 7.2
+      "id": "daily_gentle_beetle",
+      "name": "BK - 4th Av/Garfield Pl",
+      "lat": 40.67585478,
+      "lon": -73.98394371,
+      "depth_mm": 0,
+      "time": "2026-11-05T02:59:40.996+00:00"
     },
     {
-      "id": "sample-fn-3st-bridge",
-      "name": "3 St Bridge",
-      "lat": 40.676251,
-      "lon": -73.990927,
-      "depth_in": 0.4
+      "id": "terrible_white_fireant",
+      "name": "BK - 3rd Ave/Union St",
+      "lat": 40.678368819335645,
+      "lon": -73.98529246294888,
+      "depth_mm": 0,
+      "time": "2026-11-05T02:59:17.371+00:00"
     },
     {
-      "id": "sample-fn-union-nevins",
-      "name": "Union St & Nevins St",
-      "lat": 40.678696,
-      "lon": -73.98768,
-      "depth_in": 0
-    },
-    {
-      "id": "sample-fn-bond-7st",
-      "name": "Bond St & 7 St",
-      "lat": 40.674468,
-      "lon": -73.993136,
-      "depth_in": 0
+      "id": "weekly_poetic_guinea",
+      "name": "BK - Carroll St/4th Av",
+      "lat": 40.67628059,
+      "lon": -73.98408855,
+      "depth_mm": 0,
+      "time": "2026-11-05T03:00:43.044+00:00"
     }
   ]
 }
