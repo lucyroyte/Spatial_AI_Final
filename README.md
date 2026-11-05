@@ -1,47 +1,40 @@
-# Gowanus Flood Routing
+# Central Park Section
 
-A single-page three.js app that shows Citi Bike riders in Gowanus, Brooklyn, routing around flooded streets. It renders the semantic model in [SPEC.md](SPEC.md): street segments, intersections, catch basins, flood sensors, Citi Bike stations, riders and routes, with toolbar buttons for each action in the spec.
+A single-page three.js simulation of the semantic model in [SPEC.md](SPEC.md) (Lucy & Jay): a stylized section of Central Park inspired by the Lake and the Ramble. Lawns, a fenced woods and a lake are joined by paths. People and dogs wander, row boats, break fences and drop litter. Grass, weeds and duckweed grow. Rain floods low ground and can make the lake overflow. Mower, steward and skimmer robots look after it all.
 
 ## Run it
 
-It's a static site with no build step (vanilla JS, three.js from a CDN).
+Static files only: vanilla JavaScript, with three.js loaded from a CDN through an import map. No build step.
 
-- **GitHub Pages:** Settings → Pages → Build and deployment → Source: *Deploy from a branch*, then pick the branch and `/ (root)`.
-- **Locally:** `python3 -m http.server` in this folder, then open http://localhost:8000. (Opening `index.html` as a file won't work, because ES modules and `fetch` need a server.)
+- **GitHub Pages:** Settings → Pages → Deploy from a branch → `main` / `(root)`.
+- **Locally:** `python3 -m http.server` in this folder, then open http://localhost:8000 (ES modules need a server, so opening the file directly won't work).
 
-## How to use it
+## Using it
 
 - Drag to orbit, right-drag to pan, scroll to zoom.
-- Click any street, intersection, station, rider, catch basin or sensor to see its attributes in the panel on the right. The rule log underneath shows rules as they fire (streets closing, reroutes, strandings, dockings).
-- **Rain** cycles off, light, heavy. Then **Advance time** (30 s per click) or **Play**. Streets go gray → light blue → dark blue, and get a red hatched outline once they pass 6″ and become impassable.
-- **Find route**: click an origin station, then a destination. You get the flood-avoiding route (cyan), the dry-day route (dashed) and a label with both distances and the detour.
-- **Mode** switches to real mode, where flood depths come from FloodNet sensors (nearest sensor within 500 ft) and catch basins with an open 311 complaint are clogged.
-
-## Data
-
-| Source | Live URL | Sample fallback |
-| --- | --- | --- |
-| Citi Bike stations | `gbfs.citibikenyc.com/.../station_information.json` | `data/sample-station-information.json` |
-| Citi Bike availability | `gbfs.citibikenyc.com/.../station_status.json` | `data/sample-station-status.json` |
-| FloodNet | not set yet (see below) | `data/sample-floodnet.json` |
-| 311 catch basin complaints | NYC Open Data `erm2-nwe9` | `data/sample-311-catch-basins.json` |
-
-If any live request fails, the app loads the sample file and shows a notice in the corner.
-
-The sample files are made up for offline use. Station names and positions are approximate, and the FloodNet readings are illustrative (one sensor near Nevins St & 3rd St reads 7.2″ so real mode has something to show).
-
-**FloodNet endpoint:** the spec says this is still to be confirmed, so `DATA.floodnet` in `js/config.js` is empty and the sample is always used. Set it to a URL that returns a list of sensors with `id`, `lat`, `lon` and a depth (`depth_in`, `depth_inches`, `depth` in inches, or `depth_mm`).
+- Click a person, dog, boat, robot, lawn, fence segment or litter item to see its attributes. Paths, the woods, the lake, the gate and the boat landing can be clicked too.
+- The panel at the bottom left shows rain intensity, the lake level against its rim, and the time step.
+- Toolbar buttons that need a selection (for example **Go boating** or **Mow lawn**) light up once something of the right kind is selected. If a rule blocks an action, a message says why.
+- **Space** plays or pauses; **Esc** clears the selection. The event log in the panel lists rules as they fire.
 
 ## Code
 
-- `js/config.js`: study area corners, street grid, rule constants, data URLs.
-- `js/model.js`: the semantic model and rules (routing, flooding, rider states, station docks). No rendering.
-- `js/data.js`: live loaders with sample fallback.
-- `js/main.js`: three.js scene, toolbar, picking, inspector.
+| File | What it holds |
+| --- | --- |
+| `js/layout.js` | The example scene's fixed geometry: lake, woods, paths, lawns, fence segments, gate, boat landing, region adjacency, walking "portals" between regions, and the duckweed grid. `validateLayout` checks the boundary rules (no overlaps, every lawn/woods/lake borders a path, path width ≥ 1.5 ft). |
+| `js/model.js` | Entities, their attributes, and all rules. `RULES` at the top holds every rate and threshold. `advance()` is one time step; the action methods at the bottom back the toolbar. |
+| `js/view.js` | three.js rendering: grass colored by height with brown wear patches, hatching for closed and reseeding lawns, standing water, rain streaks, trees over a leaf-litter-to-weeds understory, duckweed cell by cell, boat wakes, fences, robots and target lines. |
+| `js/main.js` | Toolbar, click selection, attribute panel, status display. |
+| `js/geometry.js` | Polygon helpers. |
 
-## Simplifications
+Units are feet and inches, with x east and y north. People, dogs and robots are drawn about twice life size so they're visible from the overhead view.
 
-- The street grid is simplified: 6 north–south streets (Smith, Hoyt, Bond, Nevins, 3rd Ave, 4th Ave) and 12 east–west streets (Union to 9th). Grid points are placed by interpolating between the four real corner coordinates, then every lat/lon is converted to local feet.
-- Only Union, Carroll, 3rd and 9th St bridge the canal.
-- Each street segment has one catch basin.
-- Docked riders rest for 90 simulated seconds, then wait for a new ride to a random station, so the scene keeps moving.
+## Modeling choices
+
+Where the spec leaves room for interpretation:
+
+- **Layout:** the woods are west of the lake, the two lawns east of it. West Walk, North Walk and the two Lakeside Walks form the loop around the lake. North Walk is the path crossing from the woods to the lawns, and Lawn Walk runs between the two lawns. The Small Lawn and both Lakeside Walks are low ground.
+- **Overflow:** low lawns and paths that border the lake, or border a low lakeside path, flood as soon as the lake rises over its rim. Medium ground floods once the lake is 4″ over the rim. Overflow keeps ground wet until the lake falls back.
+- **Boats** are rented at the landing. Each trip lasts a set number of steps, then the boat returns and its rowers walk off. Two people waiting at the landing share one boat.
+- **Reseeding:** when the mower arrives, the lawn closes (status *reseeding*) and people walk to the nearest path. Once the lawn is empty, wear drops to 0 and grass to 2″, and the lawn stays closed for 60 steps.
+- **Extra behaviors:** walkers who reach a lawn sometimes sit or stand there, and people sitting or standing occasionally get up again, so lawns empty out for mowing. People also stay off a lawn while a robot is mowing it.
