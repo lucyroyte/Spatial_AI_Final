@@ -54,6 +54,11 @@ export const RIDER_SPEED_FT_S = 14; // about 9.5 mph
 export const STEP_SECONDS = 30; // "Advance time" moves the clock this far
 export const PLAY_SPEED = 20; // simulated seconds per real second while playing
 export const DOCKED_REST_S = 90; // docked riders rest, then wait for a new ride
+// Falls: on a street with more than FALL_DEPTH_IN of water, a rider can fall off.
+// The chance per simulated second grows with every inch above the threshold.
+export const FALL_DEPTH_IN = 3;
+export const FALL_RATE_PER_IN = 0.012; // per second, per inch above 3 in (about 3.5%/s at 6 in)
+export const FALL_RECOVER_S = 45; // a fallen rider gets back on the bike after this long
 
 // Seed for the example scene, so Reset always looks the same.
 export const EXAMPLE_SEED = 20261105;
@@ -64,10 +69,11 @@ export const EXAMPLE_CLOGGED = ['ew-2-2', 'ns-3-3', 'ns-2-4'];
 export const DATA = {
   stationInfo: 'https://gbfs.citibikenyc.com/gbfs/en/station_information.json',
   stationStatus: 'https://gbfs.citibikenyc.com/gbfs/en/station_status.json',
-  // FloodNet endpoint is still to be confirmed. Leave empty to use the bundled sample.
-  // The loader accepts an array (or {sensors: [...]}) of objects with an id, lat/lon
-  // and a depth in inches (depth_in, depth_inches, depth, or depth_mm).
-  floodnet: '',
+  // FloodNet public API: the list of deployed flood sensors, then each sensor's recent
+  // depth readings (millimetres). Set floodnet to '' to always use the bundled sample.
+  floodnet: 'https://api.floodnet.nyc/api/rest/deployments/flood',
+  floodnetDepth: (id, start, end) => `https://api.floodnet.nyc/api/rest/deployments/flood/${encodeURIComponent(id)}/depth?start_time=${start}&end_time=${end}`,
+  floodnetWindowMin: 60, // use the latest reading from the last hour
   // NYC Open Data 311 Service Requests (Socrata). The query is built in data.js.
   nyc311: 'https://data.cityofnewyork.us/resource/erm2-nwe9.json',
   samples: {

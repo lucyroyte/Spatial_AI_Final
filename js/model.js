@@ -80,6 +80,7 @@ export class Model {
     this.nextRiderId = 1;
     this.rng = makeRng(1);
     this.events = []; // short log of rule firings, newest first
+    this.alerts = []; // messages for the person (dock full, falls); the view drains these
     this.version = 0; // bumps whenever passability changes
     this.buildNetwork();
   }
@@ -87,6 +88,12 @@ export class Model {
   log(msg) {
     this.events.unshift({ t: this.time, msg });
     if (this.events.length > 30) this.events.length = 30;
+  }
+
+  // Log a message and also pop it up for the person. kind: 'error' | 'warn' | 'ok'.
+  alert(kind, msg) {
+    this.log(msg);
+    this.alerts.push({ kind, msg });
   }
 
   // ---- streets, intersections, canal, basins ----
@@ -439,7 +446,7 @@ export class Model {
 
   // ---- riders ----
   riderLoc(r) {
-    if (r.state === 'riding' || (r.state === 'stranded' && r.loc)) return r.loc;
+    if (r.loc && (r.state === 'riding' || r.state === 'fallen' || r.state === 'stranded')) return r.loc;
     return this.stationLoc(this.stations.get(r.station));
   }
 
@@ -456,7 +463,7 @@ export class Model {
 
   addRider({ state, origin, destination, progress = 0, timer = 0 }) {
     const id = `R${this.nextRiderId++}`;
-    const r = { id, state, origin, destination, station: origin, route: null, progress: 0, loc: null, timer, hasBike: false };
+    const r = { id, state, origin, destination, station: origin, route: null, progress: 0, loc: null, timer, hasBike: false, falls: 0, dispatched: false };
     this.riders.set(id, r);
     const o = this.stations.get(origin), d = this.stations.get(destination);
     r.route = this.makeRoute(this.stationLoc(o), this.stationLoc(d), origin, destination);
@@ -510,7 +517,58 @@ export class Model {
     r.loc = null;
     r.route = null;
     r.timer = C.DOCKED_REST_S;
-    this.log(`${r.id} docked at ${st.name}`);
+    if (r.dispatched) this.alert('ok', `${r.id} docked at ${st.name}`);
+    else this.log(`${r.id} docked at ${st.name}`);
+    r.dispatched = false;
+  }
+
+  // Send a rider to a station the person picked. If that dock is full (or flooded),
+  // the rider heads for the nearest dock with space instead.
+  // Returns {ok, msg, kind} for the view to show.
+  dispatch(r, destId) {
+    const dest = this.stations.get(destId);
+    if (!r || !dest) return { ok: false, kind: 'error', msg: 'Pick a rider and a station.' };
+    if (r.state === 'fallen') return { ok: false, kind: 'error', msg: `${r.id} has fallen off their bike and can't ride yet.` };
+    const atStation = !r.loc;
+    const here = atStation ? this.stations.get(r.station) : null;
+    if (atStation && here.id === dest.id) return { ok: false, kind: 'error', msg: `${r.id} is already at ${dest.name}.` };
+    if (atStation && !this.canStartAt(here)) {
+      const why = here.status === 'flooded' ? 'is flooded' : 'has no bikes left';
+      return { ok: false, kind: 'error', msg: `${r.id} can't start: ${here.name} ${why}.` };
+    }
+    const loc = atStation ? this.stationLoc(here) : r.loc;
+    const origin = atStation ? here.id : r.origin;
+    let route = null, target = dest, problem = null;
+    if (!this.stationOpen(dest)) problem = `${dest.name} is flooded`;
+    else if (dest.docks < 1) problem = `${dest.name} is full (0 of ${dest.capacity} docks free)`;
+    else {
+      route = this.makeRoute(loc, this.stationLoc(dest), origin, dest.id);
+      if (!route) return { ok: false, kind: 'error', msg: `No flood-free route from ${r.id} to ${dest.name} right now.` };
+    }
+    if (problem) {
+      const alt = this.nearestDock(loc, dest, origin, here?.id);
+      if (!alt) return { ok: false, kind: 'error', msg: `${problem}, and no other dock with space can be reached.` };
+      route = alt.route;
+      target = alt.station;
+    }
+    r.destination = target.id;
+    r.route = route;
+    r.dispatched = true;
+    if (atStation) {
+      this.startRide(r);
+    } else {
+      r.state = 'riding';
+      r.progress = 0;
+      r.loc = this.routeLoc(route, 0);
+    }
+    const dist = `${Math.round(route.distance).toLocaleString()} ft`;
+    if (problem) {
+      const msg = `${problem}. ${r.id} is riding to the nearest dock with space instead: ${target.name} (${dist}).`;
+      this.alert('error', msg);
+      return { ok: true, kind: 'error', msg };
+    }
+    this.log(`${r.id} sent to ${dest.name}`);
+    return { ok: true, kind: 'ok', msg: `${r.id} is heading to ${dest.name} (${dist}, ${dest.docks} docks free).` };
   }
 
   // Give a rider with a bike a new route from where they are.
@@ -521,7 +579,8 @@ export class Model {
     if (!route) {
       const alt = this.nearestDock(loc, dest || this.segmentPoint(loc.seg, loc.t), r.origin);
       if (alt) {
-        if (dest) this.log(`${r.id} rerouted to ${alt.station.name}`);
+        if (dest && r.dispatched && dest.docks < 1) this.alert('error', `${dest.name} filled up. ${r.id} is looking for space at ${alt.station.name}.`);
+        else if (dest) this.log(`${r.id} rerouted to ${alt.station.name}`);
         r.destination = alt.station.id;
         route = alt.route;
       }
@@ -597,6 +656,13 @@ export class Model {
         // Has a bike, stuck on the street: wait in place until a route opens.
         if (this.segments.get(r.loc.seg).passable) this.reroute(r);
         if (r.state === 'riding') r.loc = this.routeLoc(r.route, 0);
+      } else if (r.state === 'fallen') {
+        // Get back on the bike after a while and carry on from here.
+        r.timer -= dt;
+        if (r.timer > 0) continue;
+        r.state = 'riding';
+        this.log(`${r.id} got back on their bike`);
+        this.reroute(r);
       } else if (r.state === 'riding') {
         const dest = this.stations.get(r.destination);
         if (!this.segments.get(r.loc.seg).passable) { this.reroute(r); continue; }
@@ -605,6 +671,7 @@ export class Model {
           r.loc = this.routeLoc(r.route, 0);
         }
         r.progress += C.RIDER_SPEED_FT_S * dt;
+        if (this.maybeFall(r, dt)) continue;
         if (r.progress >= r.route.distance) {
           r.progress = r.route.distance;
           r.loc = this.routeLoc(r.route, r.progress);
@@ -616,6 +683,21 @@ export class Model {
         }
       }
     }
+  }
+
+  // Rule: on a street with more than 3 in of water, a rider may fall off their bike.
+  maybeFall(r, dt) {
+    r.loc = this.routeLoc(r.route, Math.min(r.progress, r.route.distance));
+    const seg = this.segments.get(r.loc.seg);
+    const over = seg.depth - C.FALL_DEPTH_IN;
+    if (over <= 0) return false;
+    const chance = 1 - Math.exp(-C.FALL_RATE_PER_IN * over * dt);
+    if (this.rng() >= chance) return false;
+    r.state = 'fallen';
+    r.timer = C.FALL_RECOVER_S;
+    r.falls += 1;
+    this.alert('warn', `${r.id} fell off their bike on ${seg.name} (${seg.depth.toFixed(1)} in of water)`);
+    return true;
   }
 
   step(dt) {
