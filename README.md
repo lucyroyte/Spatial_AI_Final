@@ -54,6 +54,7 @@ The simulation runs on a 5 ft grid. Each cell belongs to one region, and people 
   - skimmers for duckweed over 15% and floating litter.
   
   It adds one more for any area that is behind on today's goal. Then it deploys parked robots, buys new ones if the budget allows, and parks the ones it doesn't need.
+- The center is a small building with a **monitor** on its wall that shows a live map of the fleet. Click the building, press **M** or use **Robot monitor** to open it full size. It shows where every robot is, what it is doing, the trail of where it has been over the last 4 hours, how far it has driven and its battery. Click a robot on the map or in the list to follow it. While the monitor is open, the trails are also drawn in the park.
 - A fence fixer goes to the broken fence and waits there until the Ramble is empty, since a fence can only be repaired with nobody inside.
 
 ## People and dogs
@@ -87,7 +88,8 @@ The panel shows how much of the day each area has been presentable so far, and w
 | `js/nav.js` | A* search on the grid. |
 | `js/model.js` | Entities, their attributes and all rules, plus batteries, the controller, personalities and the daily goal. `RULES` at the top holds every rate and threshold. `advance()` is one time step; the action methods at the bottom back the toolbar. |
 | `js/view.js` | three.js rendering. People, dogs and robots get bigger as the camera pulls back, so they stay visible over the whole map. |
-| `js/main.js` | Toolbar, click selection, attribute panel, goal and controller panel. |
+| `js/monitor.js` | Draws the robot center's monitor map (used on the building's screen and in the monitor panel). |
+| `js/main.js` | Toolbar, click selection, attribute panel, goal and controller panel, robot monitor. |
 | `js/geometry.js` | Polygon helpers. |
 
 ## Modeling choices
