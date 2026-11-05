@@ -6,7 +6,8 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import * as C from './config.js';
-import { Model, makeRng } from './model.js';
+import { Model } from './model.js';
+import { buildContext, loadContext, PALETTE } from './context.js';
 import { loadStations, loadFloodNet, load311 } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -24,7 +25,7 @@ const COLORS = {
   basin: 0x334155, basinClog: 0xb45309, glow: 0x34d399, glowCore: 0x059669,
   tool: 0x06b6d4, dry: 0x1e293b,
 };
-const DEPTH_STOPS = [[0, '#a3a8ae'], [1, '#9fd3ff'], [6, '#3b82f6'], [12, '#0b2f7a']].map(([d, c]) => [d, new THREE.Color(c)]);
+const DEPTH_STOPS = [[0, '#d6d2c9'], [1, '#9fd3ff'], [6, '#3b82f6'], [12, '#0b2f7a']].map(([d, c]) => [d, new THREE.Color(c)]);
 function depthColor(d, out = new THREE.Color()) {
   if (d <= 0) return out.copy(DEPTH_STOPS[0][1]);
   for (let i = 1; i < DEPTH_STOPS.length; i++) {
@@ -47,8 +48,10 @@ Object.assign(labelRenderer.domElement.style, { position: 'absolute', top: '0', 
 container.appendChild(labelRenderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xe7ebee);
-scene.fog = new THREE.Fog(0xe7ebee, 9000, 22000);
+scene.background = new THREE.Color(PALETTE.background);
+scene.fog = new THREE.Fog(PALETTE.background, 11000, 26000);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 5, 60000);
 // Pull the camera back on narrow screens so the whole study area fits.
@@ -63,9 +66,15 @@ controls.minDistance = 250;
 controls.maxDistance = 12000;
 controls.screenSpacePanning = false;
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa0a6, 2.2));
-const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-sun.position.set(-1500, 3000, 1200);
+// Soft, even light like a model photographed on a table, with one low sun for shadows.
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb9b2a6, 1.7));
+const sun = new THREE.DirectionalLight(0xfffaf0, 2.4);
+sun.position.set(-2900, 2300, 1500);
+sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -3300, right: 3300, top: 3300, bottom: -3300, near: 500, far: 12000 });
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 1.5;
 scene.add(sun);
 
 const lineMats = [];
@@ -128,24 +137,6 @@ function flatMesh(points, h, material) {
   return m;
 }
 
-// Offset each edge of a convex quad inward by its own distance.
-function insetQuad(pts, ds) {
-  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length, cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-  const lines = pts.map((a, i) => {
-    const b = pts[(i + 1) % pts.length];
-    const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
-    let nx = -dy / L, ny = dx / L;
-    if ((cx - a.x) * nx + (cy - a.y) * ny < 0) { nx = -nx; ny = -ny; }
-    return { p: { x: a.x + nx * ds[i], y: a.y + ny * ds[i] }, d: { x: dx / L, y: dy / L } };
-  });
-  return lines.map((l, i) => {
-    const k = lines[(i + lines.length - 1) % lines.length];
-    const den = k.d.x * l.d.y - k.d.y * l.d.x;
-    const t = ((l.p.x - k.p.x) * l.d.y - (l.p.y - k.p.y) * l.d.x) / den;
-    return { x: k.p.x + k.d.x * t, y: k.p.y + k.d.y * t };
-  });
-}
-
 function hatchTexture() {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
@@ -161,57 +152,28 @@ function hatchTexture() {
 
 const streetViews = new Map();
 
-function buildStatic() {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(30000, 30000), new THREE.MeshLambertMaterial({ color: 0xd9d6cd }));
-  ground.rotation.x = -Math.PI / 2;
-  staticGroup.add(ground);
-
-  // Lighter land inside the study area
-  const area = flatMesh(model.boundary.map((p) => ({ x: p.x * 1.08, y: p.y * 1.08 })), 0.05, new THREE.MeshLambertMaterial({ color: 0xe6e3da }));
-  staticGroup.add(area);
-
-  // Canal
-  const canal = flatMesh(model.canalPolygon, H.canal, new THREE.MeshStandardMaterial({ color: 0x4f7f6d, roughness: 0.25, metalness: 0.1 }));
-  staticGroup.add(canal);
-  const mid = model.canalLine[Math.floor(model.canalLine.length * 0.62)];
+function buildStatic(ctx) {
+  // Real city context: plinth, buildings, curbs, trees, canal and parks
+  if (ctx) {
+    const o = model.proj.toXY(ctx.origin[0], ctx.origin[1]);
+    const built = buildContext(ctx, { offset: o, study: model.boundary, avoid: [...model.segments.values()] });
+    staticGroup.add(built.group);
+    console.info('Context layers:', built.stats);
+  } else {
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(30000, 30000), new THREE.MeshLambertMaterial({ color: PALETTE.plinthTop }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    staticGroup.add(ground);
+    const canal = flatMesh(model.canalPolygon, H.canal, new THREE.MeshLambertMaterial({ color: PALETTE.water }));
+    staticGroup.add(canal);
+  }
+  const mid = model.canalLine[Math.floor(model.canalLine.length * 0.3)];
   const canalLbl = document.createElement('div');
-  canalLbl.className = 'lbl-street';
-  canalLbl.style.color = '#2f5d4d';
+  canalLbl.className = 'lbl-street lbl-water';
   canalLbl.textContent = 'Gowanus Canal';
   const cl = new CSS2DObject(canalLbl);
   cl.position.copy(w(mid.x, mid.y, 4));
   staticGroup.add(cl);
-
-  // Building blocks
-  const rng = makeRng(7);
-  const bmat = new THREE.MeshStandardMaterial({ color: 0xf5f2ea, roughness: 0.95 });
-  const bmat2 = new THREE.MeshStandardMaterial({ color: 0xe8e2d5, roughness: 0.95 });
-  const G = (u, v) => model.grid(u, v);
-  const addBlock = (u0, u1, v0, v1, ds) => {
-    const pts = insetQuad([G(u0, v0), G(u1, v0), G(u1, v1), G(u0, v1)], ds);
-    const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.x, p.y)));
-    const h = 18 + rng() * 26;
-    const g = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
-    g.rotateX(-Math.PI / 2);
-    staticGroup.add(new THREE.Mesh(g, rng() < 0.5 ? bmat : bmat2));
-  };
-  const SW = 12; // sidewalk
-  const cols = C.COLUMNS, rows = C.ROWS;
-  for (let j = 0; j < cols.length - 1; j++) {
-    if (j === C.CANAL_WEST_COL) continue;
-    for (let i = 0; i < rows.length - 1; i++) {
-      addBlock(cols[j].u, cols[j + 1].u, rows[i].v, rows[i + 1].v,
-        [rows[i].width / 2 + SW, cols[j + 1].width / 2 + SW, rows[i + 1].width / 2 + SW, cols[j].width / 2 + SW]);
-    }
-  }
-  const bridges = rows.map((r, i) => (C.BRIDGE_ROWS.includes(r.name) ? i : -1)).filter((i) => i >= 0);
-  const cw = C.COLUMNS[C.CANAL_WEST_COL], ce = C.COLUMNS[C.CANAL_EAST_COL];
-  const cu0 = C.CANAL.u - C.CANAL.halfWidth, cu1 = C.CANAL.u + C.CANAL.halfWidth;
-  for (let k = 0; k < bridges.length - 1; k++) {
-    const r0 = rows[bridges[k]], r1 = rows[bridges[k + 1]];
-    addBlock(cw.u, cu0, r0.v, r1.v, [r0.width / 2 + SW, 10, r1.width / 2 + SW, cw.width / 2 + SW]);
-    addBlock(cu1, ce.u, r0.v, r1.v, [r0.width / 2 + SW, ce.width / 2 + SW, r1.width / 2 + SW, 10]);
-  }
 
   // Streets
   const hatch = hatchTexture();
@@ -226,7 +188,7 @@ function buildStatic() {
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     geo.setIndex([0, 2, 1, 0, 3, 2]);
     geo.computeVertexNormals();
-    const mat = new THREE.MeshBasicMaterial({ color: depthColor(0), depthWrite: false, side: THREE.DoubleSide });
+    const mat = new THREE.MeshBasicMaterial({ color: depthColor(0), transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.y = h;
     mesh.renderOrder = 1;
@@ -248,7 +210,7 @@ function buildStatic() {
 
   // Intersections
   const nodeGeo = new THREE.CircleGeometry(8, 16).rotateX(-Math.PI / 2);
-  const nodeMat = new THREE.MeshBasicMaterial({ color: 0x64748b, depthWrite: false });
+  const nodeMat = new THREE.MeshBasicMaterial({ color: 0x8a867d, depthWrite: false });
   for (const n of model.intersections.values()) {
     const m = new THREE.Mesh(nodeGeo, nodeMat);
     m.position.copy(w(n.x, n.y, H.node));
@@ -266,8 +228,11 @@ function buildStatic() {
     o.position.copy(w(p.x, p.y, 3));
     staticGroup.add(o);
   };
-  C.COLUMNS.forEach((c) => label(c.name, G(c.u, -0.07)));
-  C.ROWS.forEach((r) => label(r.name, G(-0.07, r.v)));
+  // Labels sit just past the study area, along each street's own line
+  const I = (ci, ri) => { const [lat, lon] = C.INTERSECTIONS[ci][ri]; return model.proj.toXY(lat, lon); };
+  const past = (a, b, d) => { const L = Math.hypot(a.x - b.x, a.y - b.y); return { x: a.x + (a.x - b.x) / L * d, y: a.y + (a.y - b.y) / L * d }; };
+  C.COLUMNS.forEach((c, ci) => label(c.name.toUpperCase(), past(I(ci, 0), I(ci, 1), 170)));
+  C.ROWS.forEach((r, ri) => label(r.name.toUpperCase(), past(I(0, ri), I(1, ri), 190)));
 }
 
 // Catch basins
@@ -966,7 +931,9 @@ function frame(now) {
 }
 
 async function start() {
-  buildStatic();
+  let ctx = null;
+  try { ctx = await loadContext(); } catch (err) { console.warn('City context failed to load:', err); }
+  buildStatic(ctx);
   buildBasins();
   await loadAll();
   const { stations, status } = liveData.stations.data;
@@ -984,6 +951,7 @@ async function start() {
   requestAnimationFrame(frame);
   // Handy for poking at the model from the browser console.
   window.__model = model;
+  window.__view = { camera, controls, scene, renderer };
   window.__toScreen = (x, y, h = 10) => {
     const v = w(x, y, h).project(camera);
     return { x: ((v.x + 1) / 2) * window.innerWidth, y: ((1 - v.y) / 2) * window.innerHeight };
