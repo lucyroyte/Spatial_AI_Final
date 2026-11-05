@@ -104,7 +104,9 @@ export class Model {
       const p = ll ? this.proj.toXY(ll[0], ll[1]) : this.grid(col.u, row.v);
       this.intersections.set(`${ci}-${ri}`, { id: `${ci}-${ri}`, name: `${col.name} & ${row.name}`, x: p.x, y: p.y, segments: [] });
     }));
+    const missing = new Set(C.MISSING_SEGMENTS || []);
     const addSeg = (id, name, aId, bId, width) => {
+      if (missing.has(id)) return;
       const a = this.intersections.get(aId), b = this.intersections.get(bId);
       const length = dist(a, b);
       const dir = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
@@ -135,6 +137,9 @@ export class Model {
         addSeg(`ew-${ri}-${ci}`, row.name, `${ci}-${ri}`, `${ci + 1}-${ri}`, row.width);
       }
     });
+
+    // Drop grid points that no street reaches
+    for (const [id, n] of this.intersections) if (!n.segments.length) this.intersections.delete(id);
 
     // Canal centerline and water polygon
     const steps = 24, e = C.CANAL.extend;

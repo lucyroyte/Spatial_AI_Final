@@ -33,6 +33,16 @@ export const ROWS = [
 export const CANAL_WEST_COL = 2;
 export const CANAL_EAST_COL = 3;
 export const BRIDGE_ROWS = ['Union St', 'Carroll St', '3rd St', '9th St'];
+
+// Grid segments with no real street under them (checked against the NYC street
+// centerline file). They are left out of the network. ns-{column}-{row}, ew-{row}-{column}.
+export const MISSING_SEGMENTS = [
+  'ns-1-7', 'ns-1-8', 'ns-1-9', 'ns-1-10', // Hoyt St south of 5th St
+  'ns-2-6', 'ns-2-7', 'ns-2-8', 'ns-2-9', 'ns-2-10', // Bond St south of 4th St
+  'ns-3-2', 'ns-3-3', 'ns-3-4', 'ns-3-5', 'ns-3-6', 'ns-3-7', 'ns-3-8', 'ns-3-9', 'ns-3-10', // Nevins St south of Carroll St
+  'ew-2-0', 'ew-2-1', 'ew-3-0', 'ew-3-3', 'ew-4-4', 'ew-6-3', 'ew-6-4', 'ew-7-1', 'ew-7-3', 'ew-7-4',
+  'ew-8-0', 'ew-8-1', 'ew-9-0', 'ew-9-1', 'ew-10-0', 'ew-10-1',
+];
 export const CANAL = { u: 0.42, halfWidth: 0.016, extend: 0.12 };
 
 // Elevation bands by distance from the canal (feet).
@@ -66,7 +76,7 @@ export const FALL_RECOVER_S = 45; // a fallen rider gets back on the bike after 
 // Seed for the example scene, so Reset always looks the same.
 export const EXAMPLE_SEED = 20261105;
 // Segments whose catch basins start clogged in the example scene (all near the canal).
-export const EXAMPLE_CLOGGED = ['ew-2-2', 'ns-3-3', 'ns-2-4'];
+export const EXAMPLE_CLOGGED = ['ew-2-2', 'ns-2-3', 'ns-2-4'];
 
 // Data sources
 export const DATA = {

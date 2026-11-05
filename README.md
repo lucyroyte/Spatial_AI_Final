@@ -47,7 +47,7 @@ The sample files are a snapshot of the live feeds for the study area, taken on 2
 
 ## Simplifications
 
-- The street grid is simplified: 6 north–south streets (Smith, Hoyt, Bond, Nevins, 3rd Ave, 4th Ave) and 12 east–west streets (Union to 9th). Each grid point sits at the real intersection of its two streets. Where two streets don't actually meet (for example Nevins St south of Carroll St), the point is where their lines would cross, so a few model segments run where there is no real street. Buildings that sit on a model street are left out so the street stays visible.
+- The street grid is simplified: 6 north–south streets (Smith, Hoyt, Bond, Nevins, 3rd Ave, 4th Ave) and 12 east–west streets (Union to 9th). Each grid point sits at the real intersection of its two streets. Segments with no real street under them (for example Nevins St south of Carroll St, or Hoyt and Bond St south of 5th St) are left out of the network; they are listed in `MISSING_SEGMENTS` in `js/config.js`.
 - Only Union, Carroll, 3rd and 9th St bridge the canal.
 - Each street segment has one catch basin.
 - Fall chance per simulated second is 1.2% for each inch of water above 3″ (`FALL_RATE_PER_IN` in `js/config.js`).

@@ -229,7 +229,7 @@ function buildStatic(ctx) {
     staticGroup.add(o);
   };
   // Labels sit just past the study area, along each street's own line
-  const I = (ci, ri) => model.intersections.get(`${ci}-${ri}`);
+  const I = (ci, ri) => { const [lat, lon] = C.INTERSECTIONS[ci][ri]; return model.proj.toXY(lat, lon); };
   const past = (a, b, d) => { const L = Math.hypot(a.x - b.x, a.y - b.y); return { x: a.x + (a.x - b.x) / L * d, y: a.y + (a.y - b.y) / L * d }; };
   C.COLUMNS.forEach((c, ci) => label(c.name.toUpperCase(), past(I(ci, 0), I(ci, 1), 170)));
   C.ROWS.forEach((r, ri) => label(r.name.toUpperCase(), past(I(0, ri), I(1, ri), 190)));
