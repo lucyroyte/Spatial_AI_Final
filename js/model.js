@@ -100,7 +100,8 @@ export class Model {
   buildNetwork() {
     const bridge = new Set(C.BRIDGE_ROWS);
     C.COLUMNS.forEach((col, ci) => C.ROWS.forEach((row, ri) => {
-      const p = this.grid(col.u, row.v);
+      const ll = C.INTERSECTIONS?.[ci]?.[ri];
+      const p = ll ? this.proj.toXY(ll[0], ll[1]) : this.grid(col.u, row.v);
       this.intersections.set(`${ci}-${ri}`, { id: `${ci}-${ri}`, name: `${col.name} & ${row.name}`, x: p.x, y: p.y, segments: [] });
     }));
     const addSeg = (id, name, aId, bId, width) => {
@@ -146,6 +147,8 @@ export class Model {
       east.push(this.grid(C.CANAL.u + C.CANAL.halfWidth, v));
     }
     this.canalPolygon = [...west, ...east.reverse()];
+    // Use the real canal centerline when it is available.
+    if (C.CANAL_LINE?.length) this.canalLine = C.CANAL_LINE.map(([lat, lon]) => this.proj.toXY(lat, lon));
 
     // Elevation from distance to the canal, and one catch basin per segment
     let n = 1;

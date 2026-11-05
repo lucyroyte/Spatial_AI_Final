@@ -17,7 +17,7 @@
   --sensor: #7c3aed;
   --station: #f97316;
   --station-off: #9ca3af;
-  --water: #4f7f6d;
+  --water: #a9bec6;
   --bg: #e7ebee;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 14px;
@@ -183,3 +183,10 @@ details summary { cursor: pointer; font-weight: 600; margin-top: 8px; }
   #notice { bottom: calc(30% + 16px); font-size: 11px; left: 8px; right: 8px; max-width: none; }
   #hint { bottom: 38%; }
 }
+
+/* Architectural-model labels: small, spaced capitals */
+.lbl-street {
+  color: #57534c; font-size: 9.5px; font-weight: 600; letter-spacing: 0.14em;
+  text-shadow: 0 0 3px #f2f0eb, 0 0 3px #f2f0eb, 0 0 2px #f2f0eb;
+}
+.lbl-water { color: #4b6a78; font-style: italic; letter-spacing: 0.08em; font-size: 11px; }

@@ -1,13 +1,16 @@
 // Study area, simplified street grid, data sources, and rule constants.
 
-// Approximate corners of the study area (lat, lon).
+// Corners of the study area (lat, lon), measured from the NYC street centerline file.
 // Union St to the north, 9th St to the south, Smith St to the west, 4th Ave to the east.
 export const CORNERS = {
-  nw: { lat: 40.6806, lon: -73.9944 }, // Union St & Smith St
-  ne: { lat: 40.6772, lon: -73.9824 }, // Union St & 4th Ave
-  sw: { lat: 40.6743, lon: -73.9960 }, // 9th St & Smith St
-  se: { lat: 40.6706, lon: -73.9884 }, // 9th St & 4th Ave
+  nw: { lat: 40.681649, lon: -73.993915 }, // Union St & Smith St
+  ne: { lat: 40.677387, lon: -73.98298 }, // Union St & 4th Ave
+  sw: { lat: 40.67475, lon: -73.997771 }, // 9th St & Smith St
+  se: { lat: 40.670333, lon: -73.988648 }, // 9th St & 4th Ave
 };
+
+// Real intersection positions and the canal centerline (generated, see js/street-grid.js).
+export { INTERSECTIONS, CANAL_LINE } from './street-grid.js';
 
 // North–south streets, placed by a 0..1 position across the area (west to east).
 export const COLUMNS = [

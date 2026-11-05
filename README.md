@@ -34,16 +34,20 @@ The sample files are a snapshot of the live feeds for the study area, taken on 2
 
 **FloodNet:** the app lists FloodNet's deployed sensors, keeps the ones within about 1,000 ft of the study area, and reads each one's latest depth from the last hour (millimetres, converted to inches). Set `DATA.floodnet` in `js/config.js` to `''` to always use the sample instead.
 
+**City context (static):** `data/context.json` holds the real city around the model, baked once from NYC Open Data and converted to local feet: building footprints with roof heights ([5zhs-2jue](https://data.cityofnewyork.us/d/5zhs-2jue)), the 2015 Street Tree Census, live trees only ([uvpi-gqnh](https://data.cityofnewyork.us/d/uvpi-gqnh)), curb lines from the planimetric pavement edge ([vs44-rznx](https://data.cityofnewyork.us/d/vs44-rznx)), the canal from planimetric hydrography ([pjs3-c3z5](https://data.cityofnewyork.us/d/pjs3-c3z5)) and parks ([enfh-gkve](https://data.cityofnewyork.us/d/enfh-gkve)). `js/street-grid.js` holds the real position of every model intersection and the canal centerline, measured from the street centerline file ([inkn-q76z](https://data.cityofnewyork.us/d/inkn-q76z)).
+
 ## Code
 
 - `js/config.js`: study area corners, street grid, rule constants, data URLs.
 - `js/model.js`: the semantic model and rules (routing, flooding, rider states, station docks). No rendering.
 - `js/data.js`: live loaders with sample fallback.
+- `js/context.js`: the architectural-model base: plinth, white building massing, curbs, street trees, water and parks.
+- `js/street-grid.js`: generated real intersection positions and canal centerline.
 - `js/main.js`: three.js scene, toolbar, picking, inspector.
 
 ## Simplifications
 
-- The street grid is simplified: 6 north–south streets (Smith, Hoyt, Bond, Nevins, 3rd Ave, 4th Ave) and 12 east–west streets (Union to 9th). Grid points are placed by interpolating between the four real corner coordinates, then every lat/lon is converted to local feet.
+- The street grid is simplified: 6 north–south streets (Smith, Hoyt, Bond, Nevins, 3rd Ave, 4th Ave) and 12 east–west streets (Union to 9th). Each grid point sits at the real intersection of its two streets. Where two streets don't actually meet (for example Nevins St south of Carroll St), the point is where their lines would cross, so a few model segments run where there is no real street. Buildings that sit on a model street are left out so the street stays visible.
 - Only Union, Carroll, 3rd and 9th St bridge the canal.
 - Each street segment has one catch basin.
 - Fall chance per simulated second is 1.2% for each inch of water above 3″ (`FALL_RATE_PER_IN` in `js/config.js`).
