@@ -33,6 +33,7 @@ export const RULES = {
   BATTERY: { move: 0.22, work: 0.22, idle: 0.03, charge: 3, reserve: 8 },
   PRICE: { mower: 18000, steward: 12000, skimmer: 15000 },
   BUDGET: 150000,
+  TRAIL_MINUTES: 240,
   CONTROLLER_EVERY: 5,
   // The daily goal.
   GOAL_SHARE: 0.6,
@@ -388,7 +389,7 @@ export class Model {
     for (const m of this.mowers) this.stepMower(m);
     for (const s of this.stewards) this.stepSteward(s);
     for (const k of this.skimmers) this.stepSkimmer(k);
-    for (const r of this.robots()) this.stepBattery(r);
+    for (const r of this.robots()) { this.stepBattery(r); this.recordTrail(r); }
     this.stepGrowth();
     this.stepChances();
     this.stepLitter();
@@ -608,11 +609,42 @@ export class Model {
     const r = { kind, id: this.newId(kind === 'mower' ? 'M' : kind === 'steward' ? 'S' : 'K'), x: pos.x, y: pos.y, state: 'idle', route: [], target: null, note: '', battery: 100, role: kind === 'steward' ? 'general' : null, recalled: false };
     r.location = this.regionIdAt(r);
     r.price = RULES.PRICE[kind];
+    r.trail = [{ x: r.x, y: r.y, t: this.time }]; r.distance = 0; r.boughtAt = this.time;
     if (kind === 'mower') { r.targetLawn = null; r.task = null; this.mowers.push(r); }
     if (kind === 'steward') { r.work = 0; this.stewards.push(r); }
     if (kind === 'skimmer') this.skimmers.push(r);
     if (!initial) this.note(`Robot ${r.id} (${kind}) bought for $${(r.price / 1000).toFixed(0)}k.`);
     return r;
+  }
+  // Where each robot has been: a point whenever it has moved 5 ft, for the last 4 hours.
+  recordTrail(r) {
+    const last = r.trail[r.trail.length - 1];
+    const d = G.dist(last, r);
+    if (d >= 5) { r.trail.push({ x: r.x, y: r.y, t: this.time }); r.distance += d; }
+    while (r.trail.length > 1 && this.time - r.trail[0].t > RULES.TRAIL_MINUTES) r.trail.shift();
+  }
+  // A short sentence for the robot center monitor.
+  taskText(r) {
+    if (r.state === 'docked') return 'Parked at the center';
+    if (r.state === 'charging') return 'Charging';
+    if (r.state === 'returning') return r.recalled ? 'Heading back to park' : 'Heading back to recharge';
+    if (r.kind === 'mower') {
+      if (!r.targetLawn) return 'Waiting for a lawn to need work';
+      const l = this.byId[r.targetLawn].name;
+      if (r.state === 'traveling') return `${r.note ? 'At' : 'Driving to'} ${l} to ${r.task}${r.note ? ` (${r.note.replace(/^waiting: /, 'waiting, ')})` : ''}`;
+      return `${r.state === 'mowing' ? 'Mowing' : 'Reseeding'} ${l}${r.note ? ` (${r.note})` : ''}`;
+    }
+    if (r.kind === 'steward') {
+      const t = r.target;
+      if (!t) return 'Looking for work';
+      const what = t.type === 'fence' ? `fence ${t.id}` : t.type === 'woods' ? 'the Ramble' : (() => { const l = this.litter.find((x) => x.id === t.id); return l ? `${l.type === 'hole' ? 'hole' : l.type === 'poop' ? 'dog poop' : 'litter'} ${t.id}` : t.id; })();
+      const verb = { traveling: 'Going to', repairing: t.type === 'fence' ? 'Repairing' : 'Filling', weeding: 'Weeding', collecting: 'Picking up' }[r.state] || r.state;
+      return `${verb} ${what}${r.note ? ` (${r.note})` : ''}`;
+    }
+    if (!r.target) return 'Looking for duckweed';
+    if (r.target.type === 'litter') return `Going to floating litter ${r.target.id}`;
+    const v = Math.round(this.duckweed[r.target.id]);
+    return `${r.state === 'eating' ? 'Eating' : 'Going to'} duckweed (${v}% cover)${r.note ? ` (${r.note})` : ''}`;
   }
   fleetCost() { return this.robots().reduce((s, r) => s + r.price, 0); }
   home(r) { return r.kind === 'skimmer' ? this.center.dock : this.center.position; }

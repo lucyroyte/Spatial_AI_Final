@@ -41,6 +41,7 @@
       <button data-action="addMower" title="Add an idle mower robot on a random path"><i class="sw mower"></i>Add mower</button>
       <button data-action="addSteward" title="Add an idle steward robot on a random path"><i class="sw steward"></i>Add steward</button>
       <button data-action="addSkimmer" title="Add an idle skimmer robot on the lake"><i class="sw skimmer"></i>Add skimmer</button>
+      <button data-action="monitor" id="btn-monitor" title="Open the robot center's monitor: where every robot is, what it's doing, where it has been and its battery">Robot monitor</button>
       <button data-action="auto" id="btn-auto" class="on" title="Let the robot controller deploy, buy and park robots">Auto: on</button>
       <label class="budget" title="Robot budget: the total price of the fleet can't go over it">Budget $<input id="budget" type="number" min="0" max="999" step="10" value="150">k</label>
     </div>
@@ -96,6 +97,21 @@
       </ul>
     </details>
   </aside>
+
+  <section id="monitor" hidden aria-label="Robot center monitor">
+    <div class="panel-head">
+      <span>Cherry Hill Robot Center · monitor</span>
+      <button id="monitor-close" aria-label="Close the monitor">×</button>
+    </div>
+    <div class="mon-body">
+      <canvas id="mon-map" width="480" height="450" title="Click a robot to select it"></canvas>
+      <div class="mon-side">
+        <div id="mon-summary" class="muted"></div>
+        <table id="mon-table"><thead><tr><th>Robot</th><th>Doing</th><th>Battery</th></tr></thead><tbody></tbody></table>
+        <p class="muted mon-note">Lines on the map and in the park show where each robot has been over the last 4 hours. Click a robot to follow it.</p>
+      </div>
+    </div>
+  </section>
 
   <div id="toasts" aria-live="polite"></div>
   <div id="loading">Loading the park…</div>

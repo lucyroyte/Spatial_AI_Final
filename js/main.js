@@ -2,6 +2,7 @@
 import { Model, RULES } from './model.js';
 import { View } from './view.js';
 import { loadLayout } from './layout.js';
+import { drawRobotMap, ROBOT_COLORS, batteryColor } from './monitor.js';
 
 const $ = (id) => document.getElementById(id);
 let layout;
@@ -122,6 +123,7 @@ function describe(e) {
     const here = model.robots().filter((r) => r.state === 'docked' || r.state === 'charging');
     rows.push(['Position', pt(e.position)], ['Skimmer dock', pt(e.dock)], ['Robots here', here.length ? here.map((r) => `${r.id} (${r.state})`).join(', ') : 'none'],
       ['Fleet', `${model.robots().length} robots, $${model.fleetCost() / 1000}k of $${model.budget / 1000}k`], ['Charging', `${RULES.BATTERY.charge}% per minute`]);
+    flags.push(['Click the building or press M for the robot monitor']);
     return { title: e.name, rows, flags };
   }
   if (k === 'mower' || k === 'steward' || k === 'skimmer') {
@@ -131,6 +133,7 @@ function describe(e) {
     if (k === 'steward') rows.push(['Target', !e.target ? 'none' : e.target.type === 'woods' ? 'The Ramble (weeding)' : `${e.target.type === 'fence' ? 'Fence' : 'Litter'} ${e.target.id}`]);
     if (k === 'skimmer') rows.push(['Target', !e.target ? 'none' : e.target.type === 'litter' ? `Floating litter ${e.target.id}` : `Duckweed cell ${model.layout.grid.cells[e.target.id].id} (${fmt(model.duckweed[e.target.id], 0)}%)`]);
     if (k !== 'skimmer') rows.push(['Location', regionName(e.location)]);
+    rows.push(['Doing', model.taskText(e)], ['Driven', `${Math.round(e.distance).toLocaleString()} ft`]);
     if (e.note) flags.push([e.note]);
     const names = { mower: 'Mower robot', steward: 'Steward robot', skimmer: 'Skimmer robot' };
     return { title: `${names[k]} ${e.id}`, rows, flags };
@@ -241,6 +244,7 @@ function run(action) {
       if (fast && !playing) run('play');
       break;
     case 'auto': res = model.toggleAuto(); break;
+    case 'monitor': setMonitor($('monitor').hidden); break;
     case 'trees': view.setTreesVisible(!view.trees.visible); $('btn-trees').classList.toggle('on', view.trees.visible); break;
     case 'reset': model.reset(); $('budget').value = model.budget / 1000; select(null); toast('Example scene restored.', true); break;
   }
@@ -253,6 +257,46 @@ function run(action) {
 
 document.querySelectorAll('#toolbar [data-action]').forEach((b) => b.addEventListener('click', () => run(b.dataset.action)));
 $('insp-close').addEventListener('click', () => select(null));
+
+// ---------- robot center monitor ----------
+let monitorT = null;
+function setMonitor(open) {
+  $('monitor').hidden = !open;
+  view.showTrails = open;
+  $('btn-monitor').classList.toggle('on', open);
+  if (open) renderMonitor();
+}
+function renderMonitor() {
+  const sel = selected();
+  monitorT = drawRobotMap($('mon-map').getContext('2d'), model, 480, 450, { selectedId: sel && sel.id, pad: 10 });
+  const robots = model.robots();
+  const count = (k) => robots.filter((r) => r.kind === k).length;
+  const charging = robots.filter((r) => r.state === 'charging' || r.state === 'docked').length;
+  $('mon-summary').textContent = `${model.clock()} · ${count('mower')} mowers, ${count('steward')} stewards, ${count('skimmer')} skimmers · ${charging} at the center · fleet $${model.fleetCost() / 1000}k of $${model.budget / 1000}k`;
+  const roles = { general: 'steward', fence: 'fence fixer', litter: 'litter picker', weeds: 'weeder' };
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  $('mon-table').tBodies[0].innerHTML = robots.map((r) => `<tr data-id="${r.id}" class="${sel && sel.id === r.id ? 'sel' : ''}">
+    <td class="rid"><i style="background:${ROBOT_COLORS[r.kind]}"></i>${r.id}<small>${r.kind === 'steward' ? roles[r.role] : r.kind} · ${regionName(r.location)}</small></td>
+    <td>${esc(model.taskText(r))}<br><small class="muted">${Math.round(r.distance).toLocaleString()} ft driven</small></td>
+    <td><div class="batt"><i style="width:${r.battery}%;background:${batteryColor(r.battery)}"></i></div><span>${Math.round(r.battery)}%</span></td></tr>`).join('');
+}
+function followRobot(id) {
+  const r = model.get(id);
+  if (!r) return;
+  select({ kind: r.kind, id: r.id });
+  view.focus(r.x, r.y, 320);
+  renderMonitor();
+}
+$('monitor-close').addEventListener('click', () => setMonitor(false));
+$('mon-table').addEventListener('click', (ev) => { const tr = ev.target.closest('tr[data-id]'); if (tr) followRobot(tr.dataset.id); });
+$('mon-map').addEventListener('click', (ev) => {
+  if (!monitorT) return;
+  const c = ev.currentTarget, rect = c.getBoundingClientRect();
+  const x = ((ev.clientX - rect.left) / rect.width) * c.width, y = ((ev.clientY - rect.top) / rect.height) * c.height;
+  let best = null, bd = 14;
+  for (const r of model.robots()) { const d = Math.hypot(monitorT.X(r.x) - x, monitorT.Y(r.y) - y); if (d < bd) { bd = d; best = r; } }
+  if (best) followRobot(best.id);
+});
 $('budget').addEventListener('change', (ev) => {
   const v = Math.max(0, Number(ev.target.value) || 0) * 1000;
   model.setBudget(v);
@@ -266,13 +310,16 @@ const canvas = view.renderer.domElement;
 canvas.addEventListener('pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY }; });
 canvas.addEventListener('pointerup', (ev) => {
   if (!down || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
-  select(view.pick(ev.clientX, ev.clientY));
+  const ref = view.pick(ev.clientX, ev.clientY);
+  select(ref);
+  if (ref && ref.monitor) setMonitor(true);
 });
 window.addEventListener('keydown', (ev) => {
   if (ev.target.tagName === 'INPUT') return;
   if (ev.key === 'f' && selected()) { const e = selected(); const p = e.anchor || e.position || e; view.focus(p.x, p.y); }
   if (ev.key === ' ') { ev.preventDefault(); run('play'); }
-  if (ev.key === 'Escape') select(null);
+  if (ev.key === 'Escape') { if (!$('monitor').hidden) setMonitor(false); else select(null); }
+  if (ev.key === 'm') run('monitor');
 });
 
 // ---------- loop ----------
@@ -283,7 +330,7 @@ function frame(now) {
   view.update(dt, selection);
   view.render();
   panelTick += dt;
-  if (panelTick > 0.2) { panelTick = 0; renderStatus(); if (selection) renderInspector(); }
+  if (panelTick > 0.2) { panelTick = 0; renderStatus(); if (selection) renderInspector(); if (!$('monitor').hidden) renderMonitor(); }
   requestAnimationFrame(frame);
 }
 renderStatus(); renderLog(); updateButtons();
