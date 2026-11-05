@@ -61,10 +61,10 @@ button:disabled { opacity: 0.4; cursor: default; }
 button.on { background: var(--accent); color: #fff; border-color: transparent; }
 
 #status {
-  position: fixed; left: 10px; bottom: 10px; padding: 10px 12px; width: 270px; z-index: 4;
+  position: fixed; left: 10px; bottom: 10px; padding: 10px 12px; width: 300px; z-index: 4; max-height: calc(100vh - 110px); overflow: auto;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
 }
-#status > div { display: flex; justify-content: space-between; align-items: baseline; }
+#status > div:not(#goal):not(#controller):not(#history) { display: flex; justify-content: space-between; align-items: baseline; }
 #status .k { color: var(--muted); }
 #status .v { font-weight: 600; font-variant-numeric: tabular-nums; font-size: 15px; }
 #status .v.alert { color: #dc2626; }
@@ -74,6 +74,18 @@ button.on { background: var(--accent); color: #fff; border-color: transparent; }
 .meter i.over { background: #dc2626; }
 .meter .rim { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); left: 41.7%; }
 
+label.budget { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-size: 12px; }
+label.budget input { width: 52px; font: inherit; color: var(--text); background: var(--btn); border: 1px solid var(--border); border-radius: 6px; padding: 4px 5px; }
+.goal-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.goal-head .muted { font-size: 11px; text-align: right; }
+.goal-row { display: grid; grid-template-columns: 52px 1fr 40px; gap: 6px; align-items: center; margin-top: 5px; font-size: 12px; }
+.goal-row .bar { position: relative; height: 9px; border-radius: 5px; background: rgba(100, 116, 139, 0.2); overflow: hidden; }
+.goal-row .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: #16a34a; }
+.goal-row .bar i.low { background: #f59e0b; }
+.goal-row .bar b { position: absolute; top: -1px; bottom: -1px; left: 60%; width: 2px; background: var(--text); }
+.goal-row .now { font-size: 10px; padding: 1px 5px; border-radius: 999px; text-align: center; }
+.goal-row .now.ok { background: #dcfce7; color: #166534; } .goal-row .now.bad { background: #fee2e2; color: #991b1b; }
+.goal-row .why { grid-column: 2 / 4; color: var(--muted); font-size: 11px; margin-top: -3px; }
 #inspector {
   position: fixed; right: 10px; top: 96px; width: 290px; max-height: calc(100vh - 110px); overflow: auto; padding: 10px 12px; z-index: 4;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
@@ -103,6 +115,8 @@ button.on { background: var(--accent); color: #fff; border-color: transparent; }
 .dot.walking { background: var(--walking); } .dot.standing { background: var(--standing); }
 .dot.sitting { background: var(--sitting); } .dot.boating { background: var(--boating); }
 .dot.litter { background: #ff2bd6; width: 7px; height: 7px; }
+.dot.poop { background: #5b3a1e; width: 7px; height: 7px; } .dot.hole { background: #3b2a1a; border: 2px solid #8a6a3f; }
+.sw.battery { background: linear-gradient(90deg, #dc2626, #22c55e); width: 18px; height: 6px; } .sw.pad { background: #334155; border-radius: 50%; box-shadow: inset 0 0 0 2px #facc15; }
 .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; }
 .sw.mower { background: var(--mower); } .sw.steward { background: var(--steward); border-radius: 50%; }
 .sw.skimmer { background: var(--skimmer); } .sw.water { background: rgba(47, 128, 237, 0.55); }
@@ -131,8 +145,10 @@ button.on { background: var(--accent); color: #fff; border-color: transparent; }
   #toolbar { gap: 6px; padding: 6px; left: 6px; right: 6px; top: 6px; max-height: 40vh; overflow: auto; }
   .brand { width: 100%; flex-direction: row; gap: 8px; align-items: baseline; }
   button { padding: 4px 7px; font-size: 12px; }
-  #inspector { top: auto; bottom: 96px; right: 6px; left: 6px; width: auto; max-height: 32vh; }
-  #status { left: 6px; bottom: 6px; width: calc(100% - 12px); }
+  #inspector { top: auto; bottom: 6px; right: 6px; left: 6px; width: auto; max-height: 34vh; z-index: 5; }
+  #inspector.empty { display: none; }
+  #status { left: 6px; bottom: 6px; width: calc(100% - 12px); max-height: 34vh; }
+  #status .goal-row .why { display: none; }
   #legend { display: none; }
   #toasts { bottom: 110px; }
 }

@@ -1,12 +1,18 @@
 // UI wiring: toolbar actions, click selection, attribute panel, status display.
 import { Model, RULES } from './model.js';
 import { View } from './view.js';
+import { loadLayout } from './layout.js';
 
 const $ = (id) => document.getElementById(id);
-const model = new Model();
+let layout;
+try { layout = await loadLayout('data/park.json'); } catch (err) {
+  $('loading').textContent = `Could not load the park data: ${err.message}`;
+  throw err;
+}
+const model = new Model(layout);
 const view = new View($('scene'), model);
 let selection = null; // { kind, id }
-let playing = null;
+let playing = null, fast = false;
 
 const fmt = (v, d = 1) => (Math.round(v * 10 ** d) / 10 ** d).toFixed(d);
 const inches = (v) => `${fmt(v)}″`;
@@ -37,8 +43,13 @@ function describe(e) {
   const rows = [], flags = [];
   const k = e.kind;
   if (k === 'person') {
+    const ps = e.personality;
     rows.push(['Position', pt(e)], ['Activity', e.activity + (e.goal?.type === 'activity' ? ` (going to ${e.goal.activity})` : '')],
-      ['Location', regionName(e.location)], ['Dog', e.dogId || 'none']);
+      ['Location', regionName(e.location)], ['Dog', e.dogId || 'none'],
+      ['Litters', ps.litterbug > 0.5 ? 'often' : ps.litterbug > 0.15 ? 'sometimes' : 'rarely'],
+      ['Breaks fences', ps.fenceHopper > 0.5 ? 'often' : ps.fenceHopper > 0.15 ? 'sometimes' : 'rarely'],
+      ['Feeds the ducks', ps.duckFeeder ? 'yes' : 'no']);
+    if (e.dogId) rows.push(['Picks up poop', ps.picksUpPoop ? 'yes' : 'no'], ['Lets dog in the woods', ps.letsDogInWoods ? 'yes' : 'no']);
     if (e.goal?.type === 'boat') flags.push(e.waitingBoat ? ['Waiting: lake overflowing', true] : ['Heading to boat landing']);
     if (e.evacuating) flags.push(['Moving to dry or open ground']);
     if (e.stranded) flags.push(['Stranded by flooding', true]);
@@ -46,7 +57,8 @@ function describe(e) {
   }
   if (k === 'dog') {
     const o = model.person(e.ownerId);
-    rows.push(['Position', pt(e)], ['Owner', e.ownerId], ['Distance to owner', o ? `${fmt(Math.hypot(o.x - e.x, o.y - e.y))} ft (max 6)` : '—'], ['Location', regionName(e.location)]);
+    rows.push(['Position', pt(e)], ['Owner', e.ownerId], ['Distance to owner', o ? `${fmt(Math.hypot(o.x - e.x, o.y - e.y))} ft (max 6)` : '—'], ['Location', regionName(e.location)],
+      ['Digs holes', e.personality.digger ? 'yes' : 'no']);
     return { title: `Dog ${e.id}`, rows, flags };
   }
   if (k === 'boat') {
@@ -103,14 +115,21 @@ function describe(e) {
     return { title: e.name, rows, flags };
   }
   if (k === 'litter') {
-    rows.push(['Position', pt(e)], ['Location', regionName(e.location)]);
-    return { title: `Litter ${e.id}`, rows, flags };
+    rows.push(['Type', e.type === 'hole' ? 'hole dug by a dog' : e.type === 'poop' ? 'dog poop' : 'trash'], ['Position', pt(e)], ['Location', regionName(e.location)]);
+    return { title: `${e.type === 'hole' ? 'Hole' : e.type === 'poop' ? 'Dog poop' : 'Litter'} ${e.id}`, rows, flags };
+  }
+  if (k === 'center') {
+    const here = model.robots().filter((r) => r.state === 'docked' || r.state === 'charging');
+    rows.push(['Position', pt(e.position)], ['Skimmer dock', pt(e.dock)], ['Robots here', here.length ? here.map((r) => `${r.id} (${r.state})`).join(', ') : 'none'],
+      ['Fleet', `${model.robots().length} robots, $${model.fleetCost() / 1000}k of $${model.budget / 1000}k`], ['Charging', `${RULES.BATTERY.charge}% per minute`]);
+    return { title: e.name, rows, flags };
   }
   if (k === 'mower' || k === 'steward' || k === 'skimmer') {
-    rows.push(['Position', pt(e)], ['State', e.state]);
+    rows.push(['Position', pt(e)], ['State', e.state + (e.recalled && e.state !== 'docked' ? ' (being parked)' : '')], ['Battery', `${fmt(e.battery, 0)}%`], ['Price', `$${e.price / 1000}k`]);
+    if (k === 'steward') rows.push(['Role', { general: 'general (fences, litter, weeds)', fence: 'fence fixer', litter: 'litter picker', weeds: 'weeder' }[e.role]]);
     if (k === 'mower') rows.push(['Target lawn', e.targetLawn ? `${regionName(e.targetLawn)} (${e.task})` : 'none']);
-    if (k === 'steward') rows.push(['Target', !e.target ? 'none' : e.target.type === 'woods' ? 'The Woods (weeding)' : `${e.target.type === 'fence' ? 'Fence' : 'Litter'} ${e.target.id}`]);
-    if (k === 'skimmer') rows.push(['Target', !e.target ? 'none' : `Duckweed cell ${model.layout.grid.cells[e.target.id].id} (${fmt(model.duckweed[e.target.id], 0)}%)`]);
+    if (k === 'steward') rows.push(['Target', !e.target ? 'none' : e.target.type === 'woods' ? 'The Ramble (weeding)' : `${e.target.type === 'fence' ? 'Fence' : 'Litter'} ${e.target.id}`]);
+    if (k === 'skimmer') rows.push(['Target', !e.target ? 'none' : e.target.type === 'litter' ? `Floating litter ${e.target.id}` : `Duckweed cell ${model.layout.grid.cells[e.target.id].id} (${fmt(model.duckweed[e.target.id], 0)}%)`]);
     if (k !== 'skimmer') rows.push(['Location', regionName(e.location)]);
     if (e.note) flags.push([e.note]);
     const names = { mower: 'Mower robot', steward: 'Steward robot', skimmer: 'Skimmer robot' };
@@ -122,6 +141,7 @@ function describe(e) {
 function renderInspector() {
   const e = selected();
   $('insp-close').hidden = !e;
+  $('inspector').classList.toggle('empty', !e);
   if (!e) {
     $('insp-kind').textContent = 'Nothing selected';
     $('insp-body').innerHTML = '<p class="muted">Click a person, dog, boat, robot, lawn, fence segment or litter item to see its attributes.</p>';
@@ -146,10 +166,35 @@ function renderStatus() {
   const bar = $('st-lake-bar');
   bar.style.width = `${Math.max(0, Math.min(100, ((lvl + 10) / 24) * 100))}%`;
   bar.classList.toggle('over', lvl > 0);
-  $('st-step').textContent = `Step ${model.time}`;
+  $('st-step').textContent = `Day ${model.day.number} · ${model.clock()}`;
   $('st-duck').textContent = `Duckweed ${fmt(model.duckweedCover(), 0)}%`;
   $('st-weed').textContent = `Weeds ${fmt(model.woods.weedCover, 0)}%`;
   $('btn-rain').textContent = `Rain: ${rain}`;
+  renderGoal();
+}
+
+function renderGoal() {
+  const share = model.dayShares(), now = model.day.now, d = now.detail;
+  const lawnsBad = model.lawns.filter((l) => l.grassHeight > RULES.NEEDS_MOWING || l.wear > RULES.NEEDS_RESEEDING || l.standingWater > RULES.PERSON_MAX_WATER).length;
+  const why = {
+    lawns: `${Math.round(now.lawnShare * 100)}% of lawn area tidy (need 80%)${lawnsBad ? ` · ${lawnsBad} need mowing, reseeding or are flooded` : ''}`,
+    woods: `weeds ${fmt(model.woods.weedCover, 0)}% (≤50) · ${d.broken} broken fences (≤3) · ${d.woodsMess} litter (≤3)`,
+    lake: `duckweed ${fmt(model.duckweedCover(), 0)}% (≤35) · ${d.lakeMess} floating litter (≤3)`,
+  };
+  const names = { lawns: 'Lawns', woods: 'Woods', lake: 'Lake' };
+  $('goal').innerHTML = ['lawns', 'woods', 'lake'].map((k) => {
+    const v = Math.round(share[k] * 100);
+    return `<div class="goal-row"><span>${names[k]}</span><span class="bar"><i class="${v < 60 ? 'low' : ''}" style="width:${v}%"></i><b></b></span><span class="now ${now[k] ? 'ok' : 'bad'}">${v}%</span><span class="why">${now[k] ? 'presentable now' : 'not presentable'}: ${why[k]}</span></div>`;
+  }).join('');
+  const kinds = ['mower', 'steward', 'skimmer'].map((k) => {
+    const all = model.robots().filter((r) => r.kind === k), out = all.filter((r) => model.deployed(r) || r.state === 'returning').length;
+    return `${out}/${all.length} ${k}s`;
+  });
+  $('fleet').textContent = `$${model.fleetCost() / 1000}k of $${model.budget / 1000}k`;
+  $('controller').textContent = `${model.autoRobots ? '' : 'Off. '}${kinds.join(' · ')} out. ${model.controllerNote}`;
+  $('history').textContent = model.history.length ? `Past days: ${model.history.slice(-5).map((h) => `day ${h.day} ${h.met ? 'met' : 'missed'}`).join(', ')}` : '';
+  $('btn-auto').textContent = `Auto: ${model.autoRobots ? 'on' : 'off'}`;
+  $('btn-auto').classList.toggle('on', model.autoRobots);
 }
 
 function updateButtons() {
@@ -159,7 +204,7 @@ function updateButtons() {
 
 // ---------- actions ----------
 function advance() {
-  model.advance();
+  for (let i = fast ? 10 : 1; i > 0; i--) model.advance();
   for (const a of model.alerts) toast(a);
   if (selection && !model.get(selection.id)) select(null);
   renderLog();
@@ -190,7 +235,14 @@ function run(action) {
       $('btn-play').textContent = playing ? 'Pause' : 'Play';
       $('btn-play').classList.toggle('on', !!playing);
       break;
-    case 'reset': model.reset(); select(null); toast('Example scene restored.', true); break;
+    case 'fast':
+      fast = !fast;
+      $('btn-fast').classList.toggle('on', fast);
+      if (fast && !playing) run('play');
+      break;
+    case 'auto': res = model.toggleAuto(); break;
+    case 'trees': view.setTreesVisible(!view.trees.visible); $('btn-trees').classList.toggle('on', view.trees.visible); break;
+    case 'reset': model.reset(); $('budget').value = model.budget / 1000; select(null); toast('Example scene restored.', true); break;
   }
   if (res && !res.ok) toast(res.msg);
   else if (res && res.msg) toast(res.msg, true);
@@ -201,6 +253,12 @@ function run(action) {
 
 document.querySelectorAll('#toolbar [data-action]').forEach((b) => b.addEventListener('click', () => run(b.dataset.action)));
 $('insp-close').addEventListener('click', () => select(null));
+$('budget').addEventListener('change', (ev) => {
+  const v = Math.max(0, Number(ev.target.value) || 0) * 1000;
+  model.setBudget(v);
+  if (v < model.fleetCost()) toast(`The fleet already costs $${model.fleetCost() / 1000}k; no more robots will be bought until it's under budget.`);
+  renderStatus();
+});
 
 // Click to select (ignore drags used for orbiting).
 let down = null;
@@ -212,6 +270,7 @@ canvas.addEventListener('pointerup', (ev) => {
 });
 window.addEventListener('keydown', (ev) => {
   if (ev.target.tagName === 'INPUT') return;
+  if (ev.key === 'f' && selected()) { const e = selected(); const p = e.anchor || e.position || e; view.focus(p.x, p.y); }
   if (ev.key === ' ') { ev.preventDefault(); run('play'); }
   if (ev.key === 'Escape') select(null);
 });
