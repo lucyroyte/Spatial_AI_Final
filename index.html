@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Gowanus Flood Routing</title>
-  <meta name="description" content="Citi Bike riders in Gowanus, Brooklyn, routing around flooded streets. A three.js view of a semantic model of streets, catch basins, flood sensors, stations, riders and routes.">
+  <title>Central Park Section</title>
+  <meta name="description" content="A three.js simulation of a stylized section of Central Park: lawns, a fenced woods and a lake, with people, dogs, boats, rain and maintenance robots.">
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
     {
@@ -19,68 +19,75 @@
   <div id="scene"></div>
 
   <header id="toolbar" role="toolbar" aria-label="Actions">
-    <div class="brand">
-      <strong>Gowanus Flood Routing</strong>
-      <span id="clock">Simulation · 00:00</span>
+    <div class="brand"><strong>Central Park Section</strong><span>Lucy &amp; Jay · semantic model</span></div>
+    <div class="group" aria-label="People">
+      <span class="group-label">People</span>
+      <button data-action="addPerson" title="Place a new walking person on a random path">Add person</button>
+      <button data-action="removePerson" data-needs="person" title="Remove the selected person and their dog">Remove person</button>
+      <button data-action="addDog" data-needs="person" title="Give the selected person a dog">Add dog</button>
+      <button data-action="changeActivity" data-needs="person" title="Cycle walking, standing, sitting">Change activity</button>
+      <button data-action="goBoating" data-needs="person" title="Send the selected person to the boat landing">Go boating</button>
+      <button data-action="dropLitter" data-needs="person" title="Drop litter near the selected person">Drop litter</button>
     </div>
-    <div class="group">
-      <button id="btn-mode" title="Toggle between live data and the rain simulation">Mode: Simulation</button>
-      <button id="btn-refresh" title="Reload Citi Bike, FloodNet and 311 data" disabled>Refresh live data</button>
+    <div class="group" aria-label="Park">
+      <span class="group-label">Park</span>
+      <button data-action="breakFence" data-needs="fence" title="Break the selected fence segment">Break fence</button>
+      <button data-action="mowLawn" data-needs="lawn" title="Send the nearest idle mower to the selected lawn">Mow lawn</button>
+      <button data-action="reseedLawn" data-needs="lawn" title="Send the nearest idle mower to reseed the selected lawn">Reseed lawn</button>
+      <button data-action="toggleLawn" data-needs="lawn" title="Open or close the selected lawn">Open/close lawn</button>
     </div>
-    <div class="group">
-      <button id="btn-route" title="Click an origin station, then a destination station">Find route</button>
-      <button id="btn-send" title="Select a rider, then click a station to send them there" disabled>Send rider</button>
-      <button id="btn-add" title="Add a rider at a random open station">Add rider</button>
-      <button id="btn-remove" title="Remove the selected rider" disabled>Remove rider</button>
-      <button id="btn-basin" title="Clog or clear the selected catch basin" disabled>Clog basin</button>
+    <div class="group" aria-label="Robots">
+      <span class="group-label">Robots</span>
+      <button data-action="addMower" title="Add an idle mower robot on a random path"><i class="sw mower"></i>Add mower</button>
+      <button data-action="addSteward" title="Add an idle steward robot on a random path"><i class="sw steward"></i>Add steward</button>
+      <button data-action="addSkimmer" title="Add an idle skimmer robot on the lake"><i class="sw skimmer"></i>Add skimmer</button>
     </div>
-    <div class="group">
-      <button id="btn-rain" title="Cycle rain: off, light, heavy">Rain: Off</button>
-      <button id="btn-step" title="Advance time by 30 seconds">Advance time</button>
-      <button id="btn-play" title="Run time continuously">Play</button>
-      <button id="btn-reset" title="Return to the example scene">Reset</button>
+    <div class="group" aria-label="Time">
+      <span class="group-label">Time</span>
+      <button data-action="rain" id="btn-rain" title="Cycle rain: none, light, heavy">Rain: none</button>
+      <button data-action="advance" title="Advance one time step">Advance time</button>
+      <button data-action="play" id="btn-play" title="Run time continuously">Play</button>
+      <button data-action="reset" title="Return to the example scene">Reset</button>
     </div>
   </header>
 
-  <div id="notice" hidden></div>
-  <div id="hint" hidden></div>
-  <div id="toasts" aria-live="polite"></div>
+  <section id="status" aria-live="polite">
+    <div><span class="k">Rain</span><span id="st-rain" class="v">none</span></div>
+    <div><span class="k">Lake level</span><span id="st-lake" class="v">−2.0″</span></div>
+    <div class="meter"><i id="st-lake-bar"></i><b class="rim"></b></div>
+    <div class="sub"><span id="st-step">Step 0</span> · <span id="st-duck">Duckweed 20%</span> · <span id="st-weed">Weeds 40%</span></div>
+  </section>
 
   <aside id="inspector" aria-live="polite">
     <div class="panel-head">
-      <span id="insp-kind">Select something</span>
-      <button id="insp-close" aria-label="Close" hidden>×</button>
+      <span id="insp-kind">Nothing selected</span>
+      <button id="insp-close" aria-label="Clear selection" hidden>×</button>
     </div>
-    <div id="insp-body">
-      <p class="muted">Click a street, intersection, station, rider, catch basin or flood sensor to see its attributes.</p>
-    </div>
-    <div id="insp-actions"></div>
-    <details id="log-wrap" open>
-      <summary>Rule log</summary>
+    <div id="insp-body"><p class="muted">Click a person, dog, boat, robot, lawn, fence segment or litter item to see its attributes.</p></div>
+    <details id="log-wrap">
+      <summary>Event log</summary>
       <ol id="log"></ol>
     </details>
   </aside>
 
   <aside id="legend">
-    <details open>
+    <details>
       <summary>Legend</summary>
-      <div class="ramp"><span>Dry</span><i></i><span>12″+</span></div>
       <ul>
-        <li><b class="sw impass"></b>Impassable (over 6″)</li>
-        <li><b class="sw water"></b>Gowanus Canal</li>
-        <li><b class="sw station"></b>Station (height = bikes)</li>
-        <li><b class="sw station-off"></b>Flooded station</li>
-        <li><b class="dot waiting"></b>Waiting <b class="dot riding"></b>Riding</li>
-        <li><b class="dot docked"></b>Docked <b class="dot stranded"></b>Stranded</li>
-        <li><b class="dot fallen"></b>Fell off (water over 3″)</li>
-        <li><b class="sw basin"></b>Basin <b class="sw basin-clog"></b>Clogged</li>
-        <li><b class="dot sensor"></b>Flood sensor</li>
+        <li><i class="dot walking"></i>Walking <i class="dot standing"></i>Standing</li>
+        <li><i class="dot sitting"></i>Sitting <i class="dot boating"></i>Boating</li>
+        <li><i class="sw mower"></i>Mower <i class="sw steward"></i>Steward <i class="sw skimmer"></i>Skimmer</li>
+        <li><i class="ramp grass"></i>Grass 2″ → 20″</li>
+        <li><i class="ramp weeds"></i>Understory: leaves → weeds</li>
+        <li><i class="sw water"></i>Standing water (deeper = darker)</li>
+        <li><i class="sw broken"></i>Broken fence &nbsp;<i class="dot litter"></i>Litter</li>
+        <li class="muted">Lines show each robot's target.</li>
       </ul>
     </details>
   </aside>
 
-  <div id="tooltip" hidden></div>
-  <div id="loading">Loading Gowanus…</div>
+  <div id="toasts" aria-live="polite"></div>
+  <div id="loading">Loading the park…</div>
 
   <script type="module" src="js/main.js"></script>
 </body>

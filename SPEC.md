@@ -1,125 +1,191 @@
-"""
-Markdown file of semantic model
-Lucy and Jay
-"""
+# Central Park Section
 
-# Gowanus Flood Routing
+*Semantic model by Lucy and Jay.*
 
-Create a single-page web application that visualizes the semantic model described below, given its entities, attributes, and associated rules. The scene is the Gowanus neighborhood in Brooklyn: a street network around the Gowanus Canal, Citi Bike stations, and riders who move between stations on routes that avoid flooded streets. Render a demonstrative example of this semantic model and give interactive means (a toolbar with buttons) to manipulate it according to the actions and rules given.
-
-The app has two modes. **Real mode** loads live data: Citi Bike station locations and availability, FloodNet flood sensor readings, and recent 311 catch basin complaints. **Simulation mode** ignores live flood data and lets the user make it rain and flood the streets.
+Create a single-page web application that visualizes the semantic model described below, given its entities, attributes, and associated rules. The scene is a stylized section of Central Park, inspired by the Lake and the Ramble, with lawns, a fenced woodland, and a lake joined by paths. People and their dogs move through the park, row boats on the lake, break fences, and leave litter, while grass, understory weeds, and duckweed grow. Rain can flood low ground and make the lake overflow. Robots mow and reseed the lawns, repair fences, weed the woods, pick up litter, and eat duckweed. Render a demonstrative example of this semantic model and give interactive means (a toolbar with buttons) to manipulate it according to the actions and rules given.
 
 ## Application requirements
 
-- Make this project a simple single-page web application.
-- Use vanilla javascript.
-- The primary view should be a three.js rendered view that fills the browser window.
-- Show the scene from an angled overhead camera that the user can orbit, pan, and zoom.
-- Convert all latitude/longitude data into local x, y coordinates in feet on the ground plane, centered on the study area.
-- If a live data request fails, load a bundled sample JSON file instead and show a small notice in the interface saying that sample data is in use.
-
-## Study area
-
-- Bounded roughly by Union Street to the north, 9th Street to the south, Smith Street to the west, and 4th Avenue to the east.
-- The Gowanus Canal runs north–south through the middle of the area and is shown as water.
-- Streets nearest the canal are the lowest ground and flood first.
+* Make this project a simple single-page web application.
+* Use vanilla javascript.
+* The primary view should be a three.js rendered view that fills the browser window.
+* Show the scene from an angled overhead camera that the user can orbit, pan, and zoom.
+* Let the user select any person, dog, boat, robot, lawn, fence segment, or litter item by clicking it, and show its attributes in a small panel.
+* Show the current rain intensity and lake water level in a small status display.
 
 ## Entities
 
-Describe each entity with the following parameters:
-
-- Street Segment
-    - name (street name)
-    - centerline (a line between two intersections)
-    - width (in feet)
-    - boundary (a closed polygon calculated from the centerline and width)
-    - length (in feet, calculated from the centerline)
-    - elevation (low, medium, or high, based on distance from the canal)
-    - flood depth (in inches, 0 or more)
-    - passable: yes or no (calculated from flood depth)
-- Intersection
-    - position (x, y on the ground plane)
-    - connected segments (the street segments that meet here)
-- Catch Basin
-    - position (x, y on the ground plane)
-    - segment (the street segment it drains)
-    - status: clear or clogged
-- Flood Sensor
-    - id (FloodNet sensor id)
-    - position (x, y on the ground plane)
-    - segment (the street segment it sits on)
-    - depth reading (in inches)
-- Citi Bike Station
-    - id and name (from the Citi Bike feed)
-    - position (x, y on the ground plane)
-    - capacity (total docks)
-    - bikes available
-    - docks available
-    - status: open or flooded
-- Rider
-    - position (x, y on the ground plane)
-    - state: waiting, riding, docked, or stranded
-    - origin station
-    - destination station
-    - route (the current route they are following)
-- Route
-    - segments (an ordered list of street segments from origin station to destination station)
-    - flood-avoiding distance (in feet, the sum of segment lengths)
-    - dry-day distance (in feet, the shortest route if no streets were flooded)
-    - detour (in feet, flood-avoiding distance minus dry-day distance)
+* **Weather**
+  * rain intensity: none, light, or heavy
+* **Lawn**
+  * grass height (in inches, between 2 and 20)
+  * wear (percent of the lawn worn down by use, between 0 and 100)
+  * boundary (a closed polygon)
+  * area (calculated from the boundary)
+  * elevation: low, medium, or high
+  * standing water (in inches, 0 or more)
+  * status: open, closed, or reseeding
+* **Path**
+  * width (in feet)
+  * boundary (a closed polygon)
+  * elevation: low, medium, or high
+  * standing water (in inches, 0 or more)
+* **Woods**
+  * boundary (a closed polygon)
+  * area (calculated from the boundary)
+  * weed cover (percent of the understory covered by weeds, between 0 and 100)
+* **Fence Segment**
+  * position (a line along the edge of the woods)
+  * status: intact or broken
+* **Maintenance Gate**
+  * position (a point on the edge of the woods)
+* **Lake**
+  * boundary (a closed polygon)
+  * area (calculated from the boundary)
+  * water level (in inches above or below the lake rim)
+  * duckweed grid (the lake surface divided into small cells, each with a duckweed cover between 0 and 100 percent)
+  * duckweed cover (percent of the whole lake covered, calculated as the average of the grid cells)
+* **Boat Landing**
+  * position (a point on the lake edge where a path meets the lake)
+* **Boat**
+  * position (x, y on the lake)
+  * heading (direction of travel)
+  * speed
+  * rowers (1 or 2 people)
+* **Litter**
+  * position (x, y on the ground plane)
+  * location: the lawn, path, woods, or lake it is in
+* **Person**
+  * position (x, y on the ground plane)
+  * activity: walking, standing, sitting, or boating
+  * location: the path, lawn, woods, or boat they are currently in
+  * dog (the dog they are walking, if any)
+* **Dog**
+  * position (x, y on the ground plane)
+  * owner (the person walking it)
+* **Mower Robot**
+  * position (x, y on the ground plane)
+  * state: idle, traveling, mowing, or reseeding
+  * target lawn
+* **Steward Robot**
+  * position (x, y on the ground plane)
+  * state: idle, traveling, repairing, weeding, or collecting
+  * target (a fence segment, the woods, or a litter item)
+* **Skimmer Robot**
+  * position (x, y on the lake)
+  * state: idle, traveling, or eating
+  * target (a duckweed grid cell or a floating litter item)
 
 ## Relationships
 
-- A street segment connects two intersections.
-- Street segments connect to each other at intersections.
-- A catch basin drains one street segment.
-- A flood sensor sits on one street segment.
-- A Citi Bike station sits beside one street segment.
-- A rider starts at an origin station and travels to a destination station.
-- A rider follows one route, made of connected street segments.
+* A path borders one or more lawns, the woods, or the lake.
+* A path connects to other paths where their boundaries meet.
+* The woods are enclosed by fence segments, with one maintenance gate.
+* A boat landing connects a path to the lake.
+* A person walks on a path, a lawn, or in the woods.
+* A person sits or stands on a lawn or in the woods.
+* A person rows a boat on the lake.
+* A dog is walked by one person and stays with them.
+* A person enters or leaves the woods through a broken fence segment.
+* A person boards or leaves a boat at a boat landing.
+* A robot enters or leaves the woods through the maintenance gate.
+* Litter is left by a person and collected by a steward robot or a skimmer robot.
+* A mower robot mows or reseeds one lawn at a time.
+* A skimmer robot eats duckweed on the lake.
+* Rain raises standing water on lawns and paths and raises the lake water level.
 
 ## Rules
 
-- A rider must always be at a station or on a street segment, never inside a building block or in the canal.
-- A street segment is impassable for bikes when its flood depth is greater than 6 inches.
-- A route can only use passable street segments.
-- A route is always the shortest path through passable segments between its two stations.
-- A rider can only start a ride at a station with at least 1 bike available. Starting a ride takes one bike from that station and frees one dock.
-- A rider can only end a ride at a station with at least 1 dock available. Ending a ride returns one bike and fills one dock.
-- If the destination station is full or flooded, the rider is rerouted to the nearest open station that has a dock available.
-- Bikes available plus docks available can never exceed a station's capacity.
-- A station is flooded when the street segment beside it is impassable. Riders cannot start or end rides at a flooded station.
-- When a street segment becomes impassable, every rider whose route crosses it is given a new route.
-- If no route exists, the rider's state becomes stranded and they wait in place until a route opens.
-- In real mode, a segment's flood depth comes from the nearest flood sensor within 500 feet. Segments with no sensor within 500 feet have a depth of 0.
-- In real mode, catch basins on segments with an open 311 catch basin complaint are clogged.
-- In simulation mode, rain raises flood depth on every segment over time. Low segments rise fastest, then medium, then high.
-- A segment with a clogged catch basin floods twice as fast as one with a clear catch basin.
-- When rain stops, flood depth drains back toward 0 over time. Segments with clogged catch basins drain at half speed.
+### People and dogs
+
+* A person must always be on a path, a lawn, in the woods, or in a boat, never in the water or outside the park.
+* A person can only enter a lawn whose status is open.
+* The number of people on a lawn cannot exceed its area divided by 10 square feet.
+* A person can only enter or leave the woods through a broken fence segment. People cannot use the maintenance gate.
+* A walking person may break an intact fence segment they are next to. When time advances, each walking person next to an intact fence has a small chance of breaking it.
+* Each time step, each person has a small chance of dropping litter where they stand. A person at the lake edge or in a boat may drop litter into the lake.
+* A dog must always stay within 6 feet of its owner.
+* A dog can go wherever its owner goes on land, but never into the lake or a boat. A person with a dog cannot board a boat.
+* A person cannot enter a lawn or path with more than 3 inches of standing water. People already there move to the nearest dry path or lawn.
+
+### Lawns, paths, and boundaries
+
+* Lawn, path, woods, and lake boundaries cannot overlap.
+* Every lawn, the woods, and the lake must border at least one path.
+* Path width must be at least 1.5 feet.
+* Grass height grows over time and cannot exceed 20 inches.
+* A lawn with grass height above 15 inches is shown as needing mowing.
+* Mowing sets grass height to 5 inches.
+* A lawn can only be mowed when it has no people or dogs on it and no standing water. A mower robot waits at the edge of a lawn until it is ready.
+* Each time step, a lawn's wear increases with the number of people and dogs on it. Dogs count as much as two people.
+* Wear increases twice as fast while a lawn has standing water, and three times as fast while it is flooded by lake overflow.
+* A lawn with wear above 70 percent is shown as needing reseeding.
+* Reseeding sets the lawn status to reseeding, wear to 0, and grass height to 2 inches. People and dogs on the lawn move to the nearest path first.
+* A reseeding lawn stays closed to people for a set number of time steps, then its status returns to open.
+* Grass does not grow on a lawn while its wear is above 70 percent.
+
+### Rain and flooding
+
+* Rain intensity raises standing water on every lawn and path over time: slowly for light rain, quickly for heavy rain.
+* Standing water collects fastest on low ground, then medium, then high. This is pluvial flooding.
+* Rain raises the lake water level over time.
+* When the lake water level rises above the lake rim, the lake overflows. Low lawns and paths bordering the lake flood first, then medium.
+* When rain stops, standing water drains over time and the lake water level falls back toward the rim. Low ground drains slowest.
+* Litter on a lawn or path with more than 3 inches of standing water washes toward the lake and ends up in the lake.
+
+### Woods
+
+* Weed cover in the woods grows over time and cannot exceed 100 percent. It grows faster for each broken fence segment, because people trampling the understory open ground for weeds.
+* Weeding by a steward robot lowers weed cover over time while the robot is in the woods and weeding.
+* A fence segment can only be repaired when no person is in the woods. This keeps people from being trapped inside.
+
+### Lake, boats, and duckweed
+
+* Duckweed cover in each grid cell grows over time and cannot exceed 100 percent. Cells next to cells with more cover grow faster, so duckweed spreads.
+* A boat must always stay inside the lake boundary.
+* A boat can carry at most 2 people.
+* Boats cannot launch while the lake is overflowing.
+* A moving boat pushes duckweed out of the cells it passes through and into the neighboring cells on either side, leaving a clear trail of open water behind it. The trail fills back in as duckweed grows.
+
+### Robots
+
+* Mower robots travel on paths and lawns only, never in the woods or lake.
+* An idle mower robot first goes to any lawn that needs reseeding, then to the lawn with the tallest grass that needs mowing. Two mower robots never target the same lawn.
+* Steward robots travel on paths, lawns, and in the woods, never in the lake. They enter the woods only through the maintenance gate.
+* A steward robot can collect litter in the lake only if it is within 3 feet of the lake edge.
+* An idle steward robot chooses its next task in this order: repair the nearest broken fence segment if the woods are empty, then collect the nearest litter on land, then weed the woods if weed cover is above 30 percent.
+* Skimmer robots travel only on the lake.
+* A skimmer robot eats duckweed, lowering the cover of the grid cell it is in over time.
+* An idle skimmer robot goes to the cell with the most duckweed cover. It collects any floating litter it passes over.
+* A skimmer robot must keep at least 10 feet away from boats.
+* Robots cannot travel through more than 6 inches of standing water and wait until it drains.
 
 ## Actions
 
 The toolbar should have buttons for the following actions:
 
-- Real / Simulation: toggles between real mode and simulation mode. Switching to simulation mode starts with all flood depths at 0 and keeps the current stations and riders.
-- Refresh live data: in real mode, reloads Citi Bike, FloodNet, and 311 data.
-- Find route: the user clicks an origin station and then a destination station. Shows the flood-avoiding route, the dry-day route as a faint dashed line, and a label with both distances and the detour.
-- Add rider: places a new rider at a random open station with bikes available, picks a random destination station, and gives them a route.
-- Remove rider: removes a selected rider.
-- Rain: in simulation mode, cycles rain intensity between off, light, and heavy.
-- Advance time / Play: moves riding riders along their routes and updates flood depths. Play runs time continuously until pressed again.
-- Clog / clear catch basin: toggles the status of a selected catch basin.
-- Reset: returns the scene to the example scene below.
-
-## Data sources
-
-- Citi Bike station information: `https://gbfs.citibikenyc.com/gbfs/en/station_information.json` (names, positions, capacity). Keep only stations inside the study area.
-- Citi Bike station status: `https://gbfs.citibikenyc.com/gbfs/en/station_status.json` (bikes and docks available).
-- FloodNet: sensor locations and current depth readings for sensors inside the study area, from the FloodNet API or a saved export (endpoint to be confirmed).
-- NYC 311 (NYC Open Data): recent open catch basin complaints inside the study area.
+* **Add person:** places a new person on a random path, with activity set to walking.
+* **Remove person:** removes a selected person, along with their dog if they have one.
+* **Add dog:** gives a selected person a dog, if they are not in a boat.
+* **Change activity:** cycles a selected person between walking, standing, and sitting, moving them onto a nearby lawn, path, or into the woods as the rules require.
+* **Go boating:** sends a selected person without a dog to the nearest boat landing and launches a boat, if the rules allow it.
+* **Break fence:** breaks a selected fence segment.
+* **Drop litter:** places a litter item at a random spot near a selected person.
+* **Rain:** cycles rain intensity between none, light, and heavy.
+* **Advance time:** moves people, dogs, boats, and robots, makes grass, weeds, and duckweed grow, updates wear, standing water, and the lake level, and applies the chance of people breaking fences and dropping litter.
+* **Play / Pause:** runs advance time continuously until pressed again.
+* **Add mower robot:** places a new idle mower robot on a random path.
+* **Add steward robot:** places a new idle steward robot on a random path.
+* **Add skimmer robot:** places a new idle skimmer robot on the lake.
+* **Mow lawn:** sends the nearest idle mower robot to a selected lawn, if the rules allow it.
+* **Reseed lawn:** sends the nearest idle mower robot to reseed a selected lawn.
+* **Open/close lawn:** toggles the status of a selected lawn between open and closed. People and dogs on a lawn that closes move to the nearest path.
+* **Reset:** returns the scene to the example scene below.
 
 ## Example scene
 
-Render the Gowanus study area with a simplified street grid, the canal down the middle, and the Citi Bike stations inside the area. Start in simulation mode with no rain, all streets dry, and 8 riders: 5 riding between stations, 2 waiting at stations, and 1 docked. Make 3 catch basins near the canal clogged so that heavy rain floods those blocks first and forces visible detours.
+Render a stylized section of Central Park with a lake in the center, a fenced woods on one side of the lake, and two lawns of different sizes on the other side. A loop of paths runs around the lake, with one path crossing between the lawns and the woods. Place a maintenance gate on the woods fence where it meets a path, and one boat landing on the lake edge. Make the smaller lawn and the path along the lake low ground, so they flood first.
 
-Color street segments by flood depth, from dry gray through light blue to dark blue, and outline impassable segments in red with hatching. Show each Citi Bike station as a column whose height shows bikes available, gray out flooded stations, and show flood sensors as small markers labeled with their depth reading. Color riders by state, and draw each riding rider's route as a glowing line on the street.
+Start with no rain and the lake level just below its rim. Start with 14 people: 6 walking on paths (2 of them with dogs), 3 sitting on lawns, 1 standing on a lawn with a dog, 2 walking in the woods, and 2 rowing one boat on the lake. Start with 2 broken fence segments so the people in the woods can get out. Give the lawns different starting grass heights so at least one needs mowing, and give the smaller lawn a wear of 60 percent so heavy use or rain pushes it into needing reseeding. Start the woods at 40 percent weed cover and the lake at 20 percent duckweed cover, clustered in patches. Scatter 6 litter items across the lawns, paths, woods, and lake. Start with 1 mower robot and 1 steward robot idle on paths, and 1 skimmer robot idle on the lake.
+
+Color grass by height, from short and light green to tall and dark green, and blend in brown patches as wear rises. Show closed lawns with a fence or hatching, and reseeding lawns with a pale straw color and a different hatching. Draw standing water as a translucent blue layer whose opacity rises with depth, and show falling rain as streaks whose density matches the rain intensity. Draw the woods as trees over an understory whose color shifts from brown leaf litter to bright weedy green as weed cover rises. Draw the lake as blue water with duckweed drawn cell by cell, and show each boat's wake as a V-shaped trail of open water. Show intact fence segments as wooden posts and rails, and broken segments as gaps with red markers. Show litter as small bright specks. Color people by activity, and draw dogs as small figures with a thin leash line to their owner. Give the mower, steward, and skimmer robots distinct shapes and colors, and show each robot's current target with a thin line.
