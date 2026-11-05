@@ -1,0 +1,47 @@
+{
+  "_note": "Bundled sample FloodNet-style readings for offline use. Readings are illustrative, not live.",
+  "sensors": [
+    {
+      "id": "sample-fn-carroll-bridge",
+      "name": "Carroll St Bridge",
+      "lat": 40.678004,
+      "lon": -73.989987,
+      "depth_in": 0
+    },
+    {
+      "id": "sample-fn-bond-2st",
+      "name": "Bond St & 2 St",
+      "lat": 40.677082,
+      "lon": -73.991941,
+      "depth_in": 1.8
+    },
+    {
+      "id": "sample-fn-nevins-3st",
+      "name": "Nevins St & 3 St",
+      "lat": 40.675739,
+      "lon": -73.989781,
+      "depth_in": 7.2
+    },
+    {
+      "id": "sample-fn-3st-bridge",
+      "name": "3 St Bridge",
+      "lat": 40.676251,
+      "lon": -73.990927,
+      "depth_in": 0.4
+    },
+    {
+      "id": "sample-fn-union-nevins",
+      "name": "Union St & Nevins St",
+      "lat": 40.678696,
+      "lon": -73.98768,
+      "depth_in": 0
+    },
+    {
+      "id": "sample-fn-bond-7st",
+      "name": "Bond St & 7 St",
+      "lat": 40.674468,
+      "lon": -73.993136,
+      "depth_in": 0
+    }
+  ]
+}
