@@ -1,0 +1,80 @@
+// Study area, simplified street grid, data sources, and rule constants.
+
+// Approximate corners of the study area (lat, lon).
+// Union St to the north, 9th St to the south, Smith St to the west, 4th Ave to the east.
+export const CORNERS = {
+  nw: { lat: 40.6806, lon: -73.9944 }, // Union St & Smith St
+  ne: { lat: 40.6772, lon: -73.9824 }, // Union St & 4th Ave
+  sw: { lat: 40.6743, lon: -73.9960 }, // 9th St & Smith St
+  se: { lat: 40.6706, lon: -73.9884 }, // 9th St & 4th Ave
+};
+
+// North–south streets, placed by a 0..1 position across the area (west to east).
+export const COLUMNS = [
+  { name: 'Smith St', u: 0.0, width: 60 },
+  { name: 'Hoyt St', u: 0.15, width: 50 },
+  { name: 'Bond St', u: 0.3, width: 50 },
+  { name: 'Nevins St', u: 0.54, width: 50 },
+  { name: '3rd Ave', u: 0.74, width: 70 },
+  { name: '4th Ave', u: 1.0, width: 100 },
+];
+
+// East–west streets, placed by a 0..1 position down the area (north to south).
+export const ROWS = [
+  'Union St', 'President St', 'Carroll St', '1st St', '2nd St', '3rd St',
+  '4th St', '5th St', '6th St', '7th St', '8th St', '9th St',
+].map((name, i, all) => ({ name, v: i / (all.length - 1), width: name === 'Union St' || name === '9th St' ? 60 : 50 }));
+
+// The canal sits between Bond St (column 2) and Nevins St (column 3).
+// Only these streets have bridges over it.
+export const CANAL_WEST_COL = 2;
+export const CANAL_EAST_COL = 3;
+export const BRIDGE_ROWS = ['Union St', 'Carroll St', '3rd St', '9th St'];
+export const CANAL = { u: 0.42, halfWidth: 0.016, extend: 0.12 };
+
+// Elevation bands by distance from the canal (feet).
+export const ELEVATION_BANDS = { low: 450, medium: 1100 };
+
+// Rules
+export const IMPASSABLE_DEPTH_IN = 6; // a segment is impassable when depth > 6 in
+export const SENSOR_RADIUS_FT = 500; // real mode: nearest sensor within 500 ft
+export const COMPLAINT_SNAP_FT = 200; // 311 complaint -> nearest segment within this distance
+export const MAX_DEPTH_IN = 18;
+
+// Simulation rates, inches per simulated second.
+export const RAIN_RATES = {
+  heavy: { low: 0.02, medium: 0.009, high: 0.004 },
+  light: { low: 0.007, medium: 0.0032, high: 0.0014 },
+};
+export const DRAIN_RATE = 0.012; // clear basins; clogged drain at half this
+export const CLOGGED_FLOOD_FACTOR = 2;
+export const CLOGGED_DRAIN_FACTOR = 0.5;
+
+export const RIDER_SPEED_FT_S = 14; // about 9.5 mph
+export const STEP_SECONDS = 30; // "Advance time" moves the clock this far
+export const PLAY_SPEED = 20; // simulated seconds per real second while playing
+export const DOCKED_REST_S = 90; // docked riders rest, then wait for a new ride
+
+// Seed for the example scene, so Reset always looks the same.
+export const EXAMPLE_SEED = 20261105;
+// Segments whose catch basins start clogged in the example scene (all near the canal).
+export const EXAMPLE_CLOGGED = ['ew-2-2', 'ns-3-3', 'ns-2-4'];
+
+// Data sources
+export const DATA = {
+  stationInfo: 'https://gbfs.citibikenyc.com/gbfs/en/station_information.json',
+  stationStatus: 'https://gbfs.citibikenyc.com/gbfs/en/station_status.json',
+  // FloodNet endpoint is still to be confirmed. Leave empty to use the bundled sample.
+  // The loader accepts an array (or {sensors: [...]}) of objects with an id, lat/lon
+  // and a depth in inches (depth_in, depth_inches, depth, or depth_mm).
+  floodnet: '',
+  // NYC Open Data 311 Service Requests (Socrata). The query is built in data.js.
+  nyc311: 'https://data.cityofnewyork.us/resource/erm2-nwe9.json',
+  samples: {
+    stationInfo: 'data/sample-station-information.json',
+    stationStatus: 'data/sample-station-status.json',
+    floodnet: 'data/sample-floodnet.json',
+    nyc311: 'data/sample-311-catch-basins.json',
+  },
+  timeoutMs: 8000,
+};

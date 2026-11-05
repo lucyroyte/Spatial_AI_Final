@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gowanus Flood Routing</title>
+  <meta name="description" content="Citi Bike riders in Gowanus, Brooklyn, routing around flooded streets. A three.js view of a semantic model of streets, catch basins, flood sensors, stations, riders and routes.">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="scene"></div>
+
+  <header id="toolbar" role="toolbar" aria-label="Actions">
+    <div class="brand">
+      <strong>Gowanus Flood Routing</strong>
+      <span id="clock">Simulation · 00:00</span>
+    </div>
+    <div class="group">
+      <button id="btn-mode" title="Toggle between live data and the rain simulation">Mode: Simulation</button>
+      <button id="btn-refresh" title="Reload Citi Bike, FloodNet and 311 data" disabled>Refresh live data</button>
+    </div>
+    <div class="group">
+      <button id="btn-route" title="Click an origin station, then a destination station">Find route</button>
+      <button id="btn-add" title="Add a rider at a random open station">Add rider</button>
+      <button id="btn-remove" title="Remove the selected rider" disabled>Remove rider</button>
+      <button id="btn-basin" title="Clog or clear the selected catch basin" disabled>Clog basin</button>
+    </div>
+    <div class="group">
+      <button id="btn-rain" title="Cycle rain: off, light, heavy">Rain: Off</button>
+      <button id="btn-step" title="Advance time by 30 seconds">Advance time</button>
+      <button id="btn-play" title="Run time continuously">Play</button>
+      <button id="btn-reset" title="Return to the example scene">Reset</button>
+    </div>
+  </header>
+
+  <div id="notice" hidden></div>
+  <div id="hint" hidden></div>
+
+  <aside id="inspector" aria-live="polite">
+    <div class="panel-head">
+      <span id="insp-kind">Select something</span>
+      <button id="insp-close" aria-label="Close" hidden>×</button>
+    </div>
+    <div id="insp-body">
+      <p class="muted">Click a street, intersection, station, rider, catch basin or flood sensor to see its attributes.</p>
+    </div>
+    <details id="log-wrap" open>
+      <summary>Rule log</summary>
+      <ol id="log"></ol>
+    </details>
+  </aside>
+
+  <aside id="legend">
+    <details open>
+      <summary>Legend</summary>
+      <div class="ramp"><span>Dry</span><i></i><span>12″+</span></div>
+      <ul>
+        <li><b class="sw impass"></b>Impassable (over 6″)</li>
+        <li><b class="sw water"></b>Gowanus Canal</li>
+        <li><b class="sw station"></b>Station (height = bikes)</li>
+        <li><b class="sw station-off"></b>Flooded station</li>
+        <li><b class="dot waiting"></b>Waiting <b class="dot riding"></b>Riding</li>
+        <li><b class="dot docked"></b>Docked <b class="dot stranded"></b>Stranded</li>
+        <li><b class="sw basin"></b>Basin <b class="sw basin-clog"></b>Clogged</li>
+        <li><b class="dot sensor"></b>Flood sensor</li>
+      </ul>
+    </details>
+  </aside>
+
+  <div id="tooltip" hidden></div>
+  <div id="loading">Loading Gowanus…</div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
