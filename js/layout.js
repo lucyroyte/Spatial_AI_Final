@@ -1,200 +1,198 @@
-// The fixed geometry of the example scene: a stylized section of Central Park
-// inspired by the Lake and the Ramble. Units are feet, x east and y north.
+// The fixed geometry of the scene: a real section of Central Park (the Lake
+// and the Ramble) baked from NYC Open Data by tools/bake_park.py into
+// data/park.json. Units are feet, x east and y north.
 //
-//   Woods (fenced) | West Walk | The Lake | Lakeside Walk | Big Lawn / Lawn Walk / Small Lawn
-//   North Walk runs along the top, from the woods across to the lawns.
-//   Lakeside Walk (south) closes the loop around the lake.
+// The simulation runs on a 5 ft grid. Every cell belongs to one region (the
+// lake, the woods, a lawn or a path) or to nothing (plantings, buildings,
+// outside the park). Regions keep their polygons for drawing.
 import * as G from './geometry.js';
 
-export const PARK = { x0: -160, x1: 160, y0: -100, y1: 100 };
-
-function makeLake(cx, cy, a, b, n = 2.6, count = 96) {
-  const pts = [];
-  for (let i = 0; i < count; i++) {
-    const t = (i / count) * Math.PI * 2;
-    const c = Math.cos(t), s = Math.sin(t);
-    // Superellipse, pulled in a little in places so the shore looks natural.
-    const w = 1 - 0.015 * (1 + Math.sin(3 * t + 0.7)) - 0.01 * (1 + Math.cos(5 * t + 1.3));
-    pts.push({
-      x: cx + a * w * Math.sign(c) * Math.abs(c) ** (2 / n),
-      y: cy + b * w * Math.sign(s) * Math.abs(s) ** (2 / n),
-    });
-  }
-  return G.ensureCCW(pts);
+export async function loadLayout(url = 'data/park.json') {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Could not load ${url}`);
+  return buildLayout(await res.json());
 }
 
-function splitEdge(a, b, target, skip) {
-  // Split a straight edge into pieces about `target` feet long, leaving the
-  // `skip` interval (a gate opening, in edge distance) uncovered.
-  const len = G.dist(a, b);
-  const at = (d) => ({ x: a.x + ((b.x - a.x) * d) / len, y: a.y + ((b.y - a.y) * d) / len });
-  const ranges = skip ? [[0, skip[0]], [skip[1], len]] : [[0, len]];
-  const out = [];
-  for (const [d0, d1] of ranges) {
-    const n = Math.max(1, Math.round((d1 - d0) / target));
-    for (let i = 0; i < n; i++) out.push([at(d0 + ((d1 - d0) * i) / n), at(d0 + ((d1 - d0) * (i + 1)) / n)]);
-  }
-  return out;
-}
+export function buildLayout(d) {
+  const g = d.grid;
+  const N = g.cols * g.rows;
+  const label = new Uint16Array(N);
+  for (let i = 0, k = 0; i < g.rle.length; i += 2) { label.fill(g.rle[i], k, k + g.rle[i + 1]); k += g.rle[i + 1]; }
 
-export function buildLayout() {
-  const R = G.rectPoly;
-  const lake = { id: 'lake', kind: 'lake', name: 'The Lake', boundary: makeLake(0, -4, 81, 76) };
-  const paths = [
-    { id: 'path-north', name: 'North Walk', boundary: R(-160, 73, 160, 79), width: 6, elevation: 'high' },
-    { id: 'path-west', name: 'West Walk', boundary: R(-90, -80, -82, 72), width: 8, elevation: 'medium' },
-    { id: 'path-east', name: 'Lakeside Walk (east)', boundary: R(82, -80, 90, 72), width: 8, elevation: 'low' },
-    { id: 'path-south', name: 'Lakeside Walk (south)', boundary: R(-90, -89, 90, -81), width: 8, elevation: 'low' },
-    { id: 'path-lawn', name: 'Lawn Walk', boundary: R(91, -45, 160, -39), width: 6, elevation: 'medium' },
-  ];
-  const lawns = [
-    { id: 'lawn-big', name: 'Big Lawn', boundary: R(91, -38, 160, 72), elevation: 'medium' },
-    { id: 'lawn-small', name: 'Small Lawn', boundary: R(91, -89, 160, -46), elevation: 'low' },
-  ];
-  const woods = { id: 'woods', kind: 'woods', name: 'The Woods', boundary: R(-160, -100, -91, 72) };
-  for (const p of paths) p.kind = 'path';
-  for (const l of lawns) l.kind = 'lawn';
-  for (const r of [lake, woods, ...paths, ...lawns]) {
-    r.area = G.polygonArea(r.boundary);
-    r.center = G.centroid(r.boundary);
-  }
-
-  // Fence segments around the woods, with a gate opening on the east side
-  // where the woods meet the West Walk.
-  const gateY = -20, gateHalf = 2.5;
-  const wb = woods.boundary; // (-160,-100) (-91,-100) (-91,72) (-160,72)
-  const fences = [];
-  const edges = [
-    [wb[0], wb[1], null],
-    [wb[1], wb[2], [gateY - gateHalf - wb[1].y, gateY + gateHalf - wb[1].y]],
-    [wb[2], wb[3], null],
-    [wb[3], wb[0], null],
-  ];
-  for (const [a, b, skip] of edges) {
-    for (const [p, q] of splitEdge(a, b, 12, skip)) fences.push({ id: `F${fences.length + 1}`, a: p, b: q });
-  }
-  const gate = {
-    id: 'gate', kind: 'gate', name: 'Maintenance Gate',
-    position: { x: -91, y: gateY }, a: { x: -91, y: gateY - gateHalf }, b: { x: -91, y: gateY + gateHalf },
-  };
-
-  // Boat landing on the south shore, where the Lakeside Walk meets the lake.
-  const south = paths.find((p) => p.id === 'path-south');
-  const shore = G.closestOnPolygon({ x: 30, y: -81 }, lake.boundary);
-  const landing = {
-    id: 'landing', kind: 'landing', name: 'Boat Landing',
-    position: { x: shore.x, y: shore.y },
-    pathId: south.id,
-    pathPoint: { x: shore.x, y: -82.5 },
-    waterPoint: G.insideNear(shore, lake.boundary, 5),
-  };
-
-  const regions = [lake, woods, ...paths, ...lawns];
+  const regions = d.regions.map((r) => ({ ...r, polygons: r.polygons.map((p) => p.map((ring) => ring.map(([x, y]) => ({ x, y })))) }));
   const byId = Object.fromEntries(regions.map((r) => [r.id, r]));
+  // label value k (1-based) -> region index k-1
+  const cellsOf = regions.map(() => []);
+  for (let i = 0; i < N; i++) if (label[i]) cellsOf[label[i] - 1].push(i);
+  const L = Object.assign(Object.create(proto), {
+    data: d, bounds: d.bounds, cell: g.cell, cols: g.cols, rows: g.rows, x0: g.x0, y0: g.y0, N, label, regions, byId,
+    other: Object.fromEntries(Object.entries(d.other).map(([k, v]) => [k, (v || []).map((p) => p.map((ring) => ring.map(([x, y]) => ({ x, y }))))])),
+    trails: d.trails.map((t) => ({ ...t, points: t.points.map(([x, y]) => ({ x, y })) })),
+    trees: d.trees,
+  });
+  regions.forEach((r, k) => {
+    r.index = k + 1;
+    r.cells = Int32Array.from(cellsOf[k]);
+    let sx = 0, sy = 0;
+    for (const c of r.cells) { sx += L.cx(c); sy += L.cy(c); }
+    r.center = r.cells.length ? { x: sx / r.cells.length, y: sy / r.cells.length } : { x: 0, y: 0 };
+    // The representative point is a cell of the region nearest its centroid.
+    let best = r.cells[0], bd = Infinity;
+    for (const c of r.cells) { const dd = (L.cx(c) - r.center.x) ** 2 + (L.cy(c) - r.center.y) ** 2; if (dd < bd) { bd = dd; best = c; } }
+    r.anchor = { x: L.cx(best), y: L.cy(best) };
+    r.boundary = r.polygons.length ? r.polygons.reduce((a, p) => (G.polygonArea(p[0]) > G.polygonArea(a) ? p[0] : a), r.polygons[0][0]) : [];
+  });
+  Object.assign(L, {
+    lake: byId.lake, woods: byId.woods,
+    paths: regions.filter((r) => r.kind === 'path'),
+    lawns: regions.filter((r) => r.kind === 'lawn'),
+  });
+  L.regionOfCell = (c) => (c >= 0 && label[c] ? regions[label[c] - 1] : null);
 
-  // Which regions border which (boundaries within a few feet of each other;
-  // the lake shore wanders, so it gets a wider allowance).
+  // Fences, gate, landing, robot center.
+  const pt = ([x, y]) => ({ x, y });
+  L.fences = d.fences.map((f) => ({ id: f.id, a: pt(f.a), b: pt(f.b) }));
+  L.gate = { id: 'gate', kind: 'gate', name: 'Maintenance Gate', position: pt(d.gate.position), a: pt(d.gate.a), b: pt(d.gate.b) };
+  L.landing = { id: 'landing', kind: 'landing', name: d.landing.name, position: pt(d.landing.position), pathPoint: pt(d.landing.pathPoint), waterPoint: pt(d.landing.waterPoint) };
+  L.center = { id: 'center', kind: 'center', name: d.center.name, position: pt(d.center.position), dock: pt(d.center.dock) };
+  L.landing.pathId = L.regionOfCell(L.cellAtNearest(L.landing.pathPoint, (r) => r.kind === 'path'))?.id;
+  L.landing.pathPoint = L.snap(L.landing.pathPoint, (r) => r.kind === 'path');
+  L.center.position = L.snap(L.center.position, (r) => r.kind === 'path');
+  L.center.dock = L.snap(L.center.dock, (r) => r.kind === 'lake');
+  L.landing.waterPoint = L.snap(L.landing.waterPoint, (r) => r.kind === 'lake');
+
+  // Region adjacency (4-neighbor cells) and distance from the lake shore.
   const adj = Object.fromEntries(regions.map((r) => [r.id, new Set()]));
-  for (let i = 0; i < regions.length; i++) {
-    for (let j = i + 1; j < regions.length; j++) {
-      const A = regions[i], B = regions[j];
-      const limit = A.kind === 'lake' || B.kind === 'lake' ? 7 : 2.5;
-      if (G.polygonGap(A.boundary, B.boundary) <= limit) { adj[A.id].add(B.id); adj[B.id].add(A.id); }
-    }
-  }
-
-  // Portals: pairs of points just inside two bordering land regions. Agents
-  // step from one to the other to change region. Woods portals go through a
-  // fence segment (people, when broken) or the gate (robots only).
-  const portals = [];
-  const addPair = (A, B, pa, pb, via) => {
-    portals.push({ from: A.id, to: B.id, pa, pb: { ...pb, hop: true }, via });
-    portals.push({ from: B.id, to: A.id, pa: pb, pb: { ...pa, hop: true }, via });
-  };
-  const land = regions.filter((r) => r.kind === 'path' || r.kind === 'lawn');
-  for (let i = 0; i < land.length; i++) {
-    for (let j = i + 1; j < land.length; j++) {
-      const A = land[i], B = land[j];
-      if (!adj[A.id].has(B.id)) continue;
-      const poly = A.boundary;
-      for (let e = 0; e < poly.length; e++) {
-        const a = poly[e], b = poly[(e + 1) % poly.length];
-        const len = G.dist(a, b), n = Math.max(1, Math.floor(len / 9));
-        for (let k = 0; k < n; k++) {
-          const t = (k + 0.5) / n;
-          const s = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-          if (G.closestOnPolygon(s, B.boundary).d > 2.5) continue;
-          const pa = G.insideNear(s, A.boundary, 0.8), pb = G.insideNear(s, B.boundary, 0.8);
-          if (G.pointInPolygon(pa, A.boundary) && G.pointInPolygon(pb, B.boundary)) addPair(A, B, pa, pb, null);
-        }
+  for (let row = 0; row < g.rows; row++) {
+    for (let col = 0; col < g.cols; col++) {
+      const i = row * g.cols + col, a = label[i];
+      if (!a) continue;
+      for (const j of [col + 1 < g.cols ? i + 1 : -1, row + 1 < g.rows ? i + g.cols : -1]) {
+        if (j < 0) continue;
+        const b = label[j];
+        if (b && b !== a) { adj[regions[a - 1].id].add(regions[b - 1].id); adj[regions[b - 1].id].add(regions[a - 1].id); }
       }
     }
   }
-  for (const f of [...fences, gate]) {
-    const m = f.position || { x: (f.a.x + f.b.x) / 2, y: (f.a.y + f.b.y) / 2 };
-    for (const P of paths) {
-      if (G.closestOnPolygon(m, P.boundary).d > 2.5) continue;
-      const pa = G.insideNear(m, wb, 1.2), pb = G.insideNear(m, P.boundary, 0.8);
-      addPair(woods, P, pa, pb, f.kind === 'gate' ? { gate: true } : { fence: f.id });
-    }
+  // Regions within 15 ft of the lake also count as bordering it (plantings
+  // often sit between a shore path and the water).
+  const lakeDist = L.distanceField((c) => label[c] === L.lake.index);
+  L.lakeDist = lakeDist;
+  for (const r of regions) {
+    if (r.kind === 'lake') continue;
+    let m = Infinity;
+    for (const c of r.cells) if (lakeDist[c] < m) m = lakeDist[c];
+    r.lakeGap = m * g.cell;
+    if (m <= 3) { adj[r.id].add('lake'); adj.lake.add(r.id); }
   }
-  const exits = Object.fromEntries(regions.map((r) => [r.id, []]));
-  portals.forEach((p, i) => exits[p.from].push(i));
+  L.adj = adj;
 
-  // Overflow tiers: low or medium ground that borders the lake, or borders a
-  // path that borders the lake. Low floods first, then medium.
-  const lakeside = new Set();
-  for (const id of adj.lake) {
-    lakeside.add(id);
-    if (byId[id].kind === 'path' && byId[id].elevation === 'low') for (const n of adj[id]) if (n !== 'lake' && n !== 'woods') lakeside.add(n);
-  }
-  const overflowTier = {};
+  // Overflow tiers: low ground by the lake floods first, then medium.
+  const lakeside = new Set([...adj.lake]);
+  for (const id of adj.lake) if (byId[id].kind === 'path' && byId[id].elevation === 'low') for (const n of adj[id]) lakeside.add(n);
+  L.overflowTier = {};
   for (const id of lakeside) {
     const r = byId[id];
     if (r.kind !== 'path' && r.kind !== 'lawn') continue;
-    if (r.elevation === 'low') overflowTier[id] = 1;
-    else if (r.elevation === 'medium') overflowTier[id] = 2;
+    if (r.elevation === 'low') L.overflowTier[id] = 1;
+    else if (r.elevation === 'medium' && adj[id].has('lake')) L.overflowTier[id] = 2;
   }
 
-  // Duckweed grid: 4 ft cells whose centers fall inside the lake.
-  const CELL = 4;
-  const lb = G.bounds(lake.boundary);
-  const cols = Math.ceil((lb.x1 - lb.x0) / CELL), rows = Math.ceil((lb.y1 - lb.y0) / CELL);
-  const cells = [];
-  const cellIndex = new Int32Array(cols * rows).fill(-1);
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const p = { x: lb.x0 + (c + 0.5) * CELL, y: lb.y0 + (r + 0.5) * CELL };
-      if (G.pointInPolygon(p, lake.boundary) && G.closestOnPolygon(p, lake.boundary).d > 1) {
-        cellIndex[r * cols + c] = cells.length;
-        cells.push({ id: `C${c}-${r}`, col: c, row: r, x: p.x, y: p.y });
+  // Fence crossings: each woods cell on the woods edge knows the fence
+  // segment (or gate) it sits behind.
+  const W = L.woods.index;
+  L.fenceAt = new Int32Array(N).fill(-1); // fence index, or -2 for the gate
+  for (const c of L.woods.cells) {
+    let edge = false;
+    L.neighbors4(c, (n) => { if (label[n] !== W && label[n] !== L.lake.index) edge = true; });
+    if (!edge) continue;
+    const p = { x: L.cx(c), y: L.cy(c) };
+    if (G.closestOnSegment(p, L.gate.a, L.gate.b).d < 9) { L.fenceAt[c] = -2; continue; }
+    let best = -1, bd = 16;
+    L.fences.forEach((f, k) => { const dd = G.closestOnSegment(p, f.a, f.b).d; if (dd < bd) { bd = dd; best = k; } });
+    L.fenceAt[c] = best;
+  }
+
+  // Woods cells near the Ramble's trails, where people like to walk.
+  L.trailCells = [];
+  const inWoodsTrail = new Uint8Array(N);
+  for (const t of L.trails) {
+    for (let k = 0; k + 1 < t.points.length; k++) {
+      const a = t.points[k], b = t.points[k + 1], n = Math.ceil(G.dist(a, b) / 3);
+      for (let s = 0; s <= n; s++) {
+        const c = L.cellAt({ x: a.x + ((b.x - a.x) * s) / n, y: a.y + ((b.y - a.y) * s) / n });
+        if (c >= 0 && label[c] === W && !inWoodsTrail[c]) { inWoodsTrail[c] = 1; L.trailCells.push(c); }
       }
     }
   }
-  for (const cell of cells) {
-    cell.nbrs = [[1, 0], [-1, 0], [0, 1], [0, -1]]
-      .map(([dc, dr]) => {
-        const c = cell.col + dc, r = cell.row + dr;
-        return c >= 0 && r >= 0 && c < cols && r < rows ? cellIndex[r * cols + c] : -1;
-      })
-      .filter((i) => i >= 0);
-  }
-  const grid = { CELL, x0: lb.x0, y0: lb.y0, cols, rows, cells, cellIndex };
 
-  return { lake, woods, paths, lawns, regions, byId, fences, gate, landing, adj, portals, exits, overflowTier, grid };
-}
-
-// Checks the geometric rules of the model and returns a list of problems.
-export function validateLayout(L) {
-  const problems = [];
-  for (let i = 0; i < L.regions.length; i++) {
-    for (let j = i + 1; j < L.regions.length; j++) {
-      if (G.polygonsOverlap(L.regions[i].boundary, L.regions[j].boundary)) problems.push(`${L.regions[i].name} overlaps ${L.regions[j].name}`);
+  // Duckweed grid: 20 ft cells whose centers fall in the lake.
+  const DC = 20, lb = G.bounds(L.lake.boundary);
+  const dcols = Math.ceil((lb.x1 - lb.x0) / DC), drows = Math.ceil((lb.y1 - lb.y0) / DC);
+  const cells = [], cellIndex = new Int32Array(dcols * drows).fill(-1);
+  for (let r = 0; r < drows; r++) {
+    for (let c = 0; c < dcols; c++) {
+      const p = { x: lb.x0 + (c + 0.5) * DC, y: lb.y0 + (r + 0.5) * DC };
+      const gc = L.cellAt(p);
+      if (gc >= 0 && label[gc] === L.lake.index) { cellIndex[r * dcols + c] = cells.length; cells.push({ id: `C${c}-${r}`, col: c, row: r, x: p.x, y: p.y }); }
     }
   }
-  for (const r of [...L.lawns, L.woods, L.lake]) {
-    if (![...L.adj[r.id]].some((id) => L.byId[id].kind === 'path')) problems.push(`${r.name} does not border a path`);
+  for (const cell of cells) {
+    cell.nbrs = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dc, dr]) => {
+      const c = cell.col + dc, r = cell.row + dr;
+      return c >= 0 && r >= 0 && c < dcols && r < drows ? cellIndex[r * dcols + c] : -1;
+    }).filter((i) => i >= 0);
   }
-  for (const p of L.paths) if (p.width < 1.5) problems.push(`${p.name} is narrower than 1.5 ft`);
-  return problems;
+  L.grid = { CELL: DC, x0: lb.x0, y0: lb.y0, cols: dcols, rows: drows, cells, cellIndex };
+  return L;
 }
+
+// Grid helpers, attached to the layout object.
+const proto = {
+  cx(c) { return this.x0 + ((c % this.cols) + 0.5) * this.cell; },
+  cy(c) { return this.y0 + (Math.floor(c / this.cols) + 0.5) * this.cell; },
+  cellAt(p) {
+    const col = Math.floor((p.x - this.x0) / this.cell), row = Math.floor((p.y - this.y0) / this.cell);
+    if (col < 0 || row < 0 || col >= this.cols || row >= this.rows) return -1;
+    return row * this.cols + col;
+  },
+  regionAt(p) { return this.regionOfCell(this.cellAt(p)); },
+  neighbors4(c, fn) {
+    const col = c % this.cols, row = (c - col) / this.cols;
+    if (col > 0) fn(c - 1); if (col + 1 < this.cols) fn(c + 1);
+    if (row > 0) fn(c - this.cols); if (row + 1 < this.rows) fn(c + this.cols);
+  },
+  // Breadth-first distance (in cells, 4-connected) from every cell to the nearest source cell.
+  distanceField(isSource) {
+    const d = new Uint16Array(this.N).fill(65535), q = new Int32Array(this.N);
+    let h = 0, t = 0;
+    for (let i = 0; i < this.N; i++) if (isSource(i)) { d[i] = 0; q[t++] = i; }
+    while (h < t) {
+      const c = q[h++], nd = d[c] + 1;
+      this.neighbors4(c, (n) => { if (d[n] > nd) { d[n] = nd; q[t++] = n; } });
+    }
+    return d;
+  },
+  cellAtNearest(p, filter) {
+    const c0 = this.cellAt(p);
+    const col0 = c0 % this.cols, row0 = Math.floor(c0 / this.cols);
+    for (let r = 0; r < 40; r++) {
+      let best = -1, bd = Infinity;
+      for (let dr = -r; dr <= r; dr++) for (let dc = -r; dc <= r; dc++) {
+        if (Math.max(Math.abs(dr), Math.abs(dc)) !== r) continue;
+        const col = col0 + dc, row = row0 + dr;
+        if (col < 0 || row < 0 || col >= this.cols || row >= this.rows) continue;
+        const c = row * this.cols + col, reg = this.regionOfCell(c);
+        if (reg && filter(reg)) { const dd = dr * dr + dc * dc; if (dd < bd) { bd = dd; best = c; } }
+      }
+      if (best >= 0) return best;
+    }
+    return c0;
+  },
+  snap(p, filter) {
+    const r = this.regionAt(p);
+    if (r && filter(r)) return { ...p };
+    const c = this.cellAtNearest(p, filter);
+    return { x: this.cx(c), y: this.cy(c) };
+  },
+};

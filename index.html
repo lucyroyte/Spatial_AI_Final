@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Central Park Section</title>
-  <meta name="description" content="A three.js simulation of a stylized section of Central Park: lawns, a fenced woods and a lake, with people, dogs, boats, rain and maintenance robots.">
+  <meta name="description" content="A three.js simulation of the Lake and the Ramble in Central Park, built from NYC Open Data: people, dogs, boats, rain, and a fleet of maintenance robots working toward a daily goal.">
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
     {
@@ -19,7 +19,7 @@
   <div id="scene"></div>
 
   <header id="toolbar" role="toolbar" aria-label="Actions">
-    <div class="brand"><strong>Central Park Section</strong><span>Lucy &amp; Jay · semantic model</span></div>
+    <div class="brand"><strong>Central Park Section</strong><span>The Lake &amp; the Ramble · NYC Open Data</span></div>
     <div class="group" aria-label="People">
       <span class="group-label">People</span>
       <button data-action="addPerson" title="Place a new walking person on a random path">Add person</button>
@@ -41,13 +41,17 @@
       <button data-action="addMower" title="Add an idle mower robot on a random path"><i class="sw mower"></i>Add mower</button>
       <button data-action="addSteward" title="Add an idle steward robot on a random path"><i class="sw steward"></i>Add steward</button>
       <button data-action="addSkimmer" title="Add an idle skimmer robot on the lake"><i class="sw skimmer"></i>Add skimmer</button>
+      <button data-action="auto" id="btn-auto" class="on" title="Let the robot controller deploy, buy and park robots">Auto: on</button>
+      <label class="budget" title="Robot budget: the total price of the fleet can't go over it">Budget $<input id="budget" type="number" min="0" max="999" step="10" value="150">k</label>
     </div>
     <div class="group" aria-label="Time">
       <span class="group-label">Time</span>
       <button data-action="rain" id="btn-rain" title="Cycle rain: none, light, heavy">Rain: none</button>
       <button data-action="advance" title="Advance one time step">Advance time</button>
       <button data-action="play" id="btn-play" title="Run time continuously">Play</button>
+      <button data-action="fast" id="btn-fast" title="Run 10 steps per tick">Fast</button>
       <button data-action="reset" title="Return to the example scene">Reset</button>
+      <button data-action="trees" id="btn-trees" class="on" title="Show or hide trees">Trees</button>
     </div>
   </header>
 
@@ -55,7 +59,12 @@
     <div><span class="k">Rain</span><span id="st-rain" class="v">none</span></div>
     <div><span class="k">Lake level</span><span id="st-lake" class="v">−2.0″</span></div>
     <div class="meter"><i id="st-lake-bar"></i><b class="rim"></b></div>
-    <div class="sub"><span id="st-step">Step 0</span> · <span id="st-duck">Duckweed 20%</span> · <span id="st-weed">Weeds 40%</span></div>
+    <div class="sub"><span id="st-step">Day 1 · 06:00</span> · <span id="st-duck">Duckweed 20%</span> · <span id="st-weed">Weeds 40%</span></div>
+    <div class="goal-head"><b>Daily goal</b><span class="muted">each area presentable 60% of the day</span></div>
+    <div id="goal"></div>
+    <div class="goal-head"><b>Robot controller</b><span id="fleet" class="muted"></span></div>
+    <div id="controller" class="sub"></div>
+    <div id="history" class="sub"></div>
   </section>
 
   <aside id="inspector" aria-live="polite">
@@ -63,7 +72,7 @@
       <span id="insp-kind">Nothing selected</span>
       <button id="insp-close" aria-label="Clear selection" hidden>×</button>
     </div>
-    <div id="insp-body"><p class="muted">Click a person, dog, boat, robot, lawn, fence segment or litter item to see its attributes.</p></div>
+    <div id="insp-body"><p class="muted">Click a person, dog, boat, robot, lawn, fence segment, litter item or the robot center to see its attributes.</p></div>
     <details id="log-wrap">
       <summary>Event log</summary>
       <ol id="log"></ol>
@@ -81,6 +90,8 @@
         <li><i class="ramp weeds"></i>Understory: leaves → weeds</li>
         <li><i class="sw water"></i>Standing water (deeper = darker)</li>
         <li><i class="sw broken"></i>Broken fence &nbsp;<i class="dot litter"></i>Litter</li>
+        <li><i class="dot poop"></i>Dog poop &nbsp;<i class="dot hole"></i>Hole dug by a dog</li>
+        <li><i class="sw battery"></i>Robot battery &nbsp;<i class="sw pad"></i>Robot center</li>
         <li class="muted">Lines show each robot's target.</li>
       </ul>
     </details>
