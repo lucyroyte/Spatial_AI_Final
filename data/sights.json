@@ -1,0 +1,47 @@
+{
+ "about": "Sights inside the map, for visitors to look for. WGS84 points from public coordinates, converted to the same shifted EPSG:2263 feet as park.json.",
+ "sights": [
+  {
+   "id": "bethesda",
+   "name": "Bethesda Terrace",
+   "x": -132.5,
+   "y": -1056.6,
+   "sight": 150
+  },
+  {
+   "id": "bow",
+   "name": "Bow Bridge",
+   "x": -418.0,
+   "y": -404.6,
+   "sight": 220
+  },
+  {
+   "id": "belvedere",
+   "name": "Belvedere Castle",
+   "x": 365.3,
+   "y": 867.2,
+   "sight": 300
+  },
+  {
+   "id": "hernshead",
+   "name": "Hernshead",
+   "x": -941.6,
+   "y": -91.4,
+   "sight": 120
+  },
+  {
+   "id": "ladies",
+   "name": "Ladies' Pavilion",
+   "x": -905.5,
+   "y": -182.5,
+   "sight": 100
+  },
+  {
+   "id": "boathouse",
+   "name": "Loeb Boathouse",
+   "x": 429.6,
+   "y": -582.8,
+   "sight": 160
+  }
+ ]
+}

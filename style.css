@@ -64,7 +64,7 @@ button.on { background: var(--accent); color: #fff; border-color: transparent; }
   position: fixed; left: 10px; bottom: 10px; padding: 10px 12px; width: 300px; z-index: 4; max-height: calc(100vh - 110px); overflow: auto;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
 }
-#status > div:not(#goal):not(#controller):not(#history) { display: flex; justify-content: space-between; align-items: baseline; }
+#status > div:not(#goal):not(#controller):not(#history):not(#visitors):not(#overlay-key) { display: flex; justify-content: space-between; align-items: baseline; }
 #status .k { color: var(--muted); }
 #status .v { font-weight: 600; font-variant-numeric: tabular-nums; font-size: 15px; }
 #status .v.alert { color: #dc2626; }
@@ -175,3 +175,12 @@ label.budget input { width: 52px; font: inherit; color: var(--text); background:
   .mon-body { flex-direction: column; }
   #mon-map { width: 100%; }
 }
+
+/* Agent knowledge */
+label.overlay { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+label.overlay select { font: inherit; color: var(--text); background: var(--btn); border: 1px solid var(--border); border-radius: 6px; padding: 4px 5px; max-width: 190px; }
+#visitors div { margin-top: 3px; }
+#overlay-key:empty { display: none; }
+#overlay-key i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 3px 0 6px; vertical-align: -1px; }
+.know-btn { display: block; margin-top: 10px; width: 100%; }
+.lm-label { font: 600 10px/1.2 system-ui, sans-serif; color: #111827; background: rgba(255,255,255,0.88); border-left: 3px solid #fff; padding: 1px 5px; border-radius: 3px; white-space: nowrap; transform: translateY(-50%); }

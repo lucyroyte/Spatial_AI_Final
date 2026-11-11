@@ -10,7 +10,10 @@ import * as G from './geometry.js';
 export async function loadLayout(url = 'data/park.json') {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Could not load ${url}`);
-  return buildLayout(await res.json());
+  const d = await res.json();
+  // Sights (Bow Bridge, Belvedere Castle...) are optional extras for visitors.
+  try { const s = await fetch(url.replace('park.json', 'sights.json')); if (s.ok) d.sights = (await s.json()).sights; } catch (e) { /* none */ }
+  return buildLayout(d);
 }
 
 export function buildLayout(d) {
@@ -28,7 +31,7 @@ export function buildLayout(d) {
     data: d, bounds: d.bounds, cell: g.cell, cols: g.cols, rows: g.rows, x0: g.x0, y0: g.y0, N, label, regions, byId,
     other: Object.fromEntries(Object.entries(d.other).map(([k, v]) => [k, (v || []).map((p) => p.map((ring) => ring.map(([x, y]) => ({ x, y }))))])),
     trails: d.trails.map((t) => ({ ...t, points: t.points.map(([x, y]) => ({ x, y })) })),
-    trees: d.trees,
+    trees: d.trees, sights: d.sights || [],
   });
   regions.forEach((r, k) => {
     r.index = k + 1;

@@ -45,6 +45,11 @@
       <button data-action="auto" id="btn-auto" class="on" title="Let the robot controller deploy, buy and park robots">Auto: on</button>
       <label class="budget" title="Robot budget: the total price of the fleet can't go over it">Budget $<input id="budget" type="number" min="0" max="999" step="10" value="150">k</label>
     </div>
+    <div class="group" aria-label="Agents">
+      <span class="group-label">Agents</span>
+      <button data-action="addVisitors" title="25 more visitors come in at the park entrances. Each one only knows where it came in.">Add 25 visitors</button>
+      <label class="overlay" title="Show what agents know and share">Show <select id="overlay"></select></label>
+    </div>
     <div class="group" aria-label="Time">
       <span class="group-label">Time</span>
       <button data-action="rain" id="btn-rain" title="Cycle rain: none, light, heavy">Rain: none</button>
@@ -66,6 +71,9 @@
     <div class="goal-head"><b>Robot controller</b><span id="fleet" class="muted"></span></div>
     <div id="controller" class="sub"></div>
     <div id="history" class="sub"></div>
+    <div class="goal-head"><b>Visitors</b><span class="muted">each knows only what they've seen</span></div>
+    <div id="visitors" class="sub"></div>
+    <div id="overlay-key" class="sub"></div>
   </section>
 
   <aside id="inspector" aria-live="polite">
@@ -94,6 +102,7 @@
         <li><i class="dot poop"></i>Dog poop &nbsp;<i class="dot hole"></i>Hole dug by a dog</li>
         <li><i class="sw battery"></i>Robot battery &nbsp;<i class="sw pad"></i>Robot center</li>
         <li class="muted">Lines show each robot's target.</li>
+        <li class="muted">Select a person or robot to see its cone of vision; press K for what it knows.</li>
       </ul>
     </details>
   </aside>

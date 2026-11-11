@@ -3,6 +3,7 @@ import { Model, RULES } from './model.js';
 import { View } from './view.js';
 import { loadLayout } from './layout.js';
 import { drawRobotMap, ROBOT_COLORS, batteryColor } from './monitor.js';
+import { OVERLAYS, LANDMARK_COLORS } from './knowledge.js';
 
 const $ = (id) => document.getElementById(id);
 let layout;
@@ -51,6 +52,16 @@ function describe(e) {
       ['Breaks fences', ps.fenceHopper > 0.5 ? 'often' : ps.fenceHopper > 0.15 ? 'sometimes' : 'rarely'],
       ['Feeds the ducks', ps.duckFeeder ? 'yes' : 'no']);
     if (e.dogId) rows.push(['Picks up poop', ps.picksUpPoop ? 'yes' : 'no'], ['Lets dog in the woods', ps.letsDogInWoods ? 'yes' : 'no']);
+    rows.push(['Reports problems', ps.reporter ? 'yes, like calling 311' : 'no']);
+    if (e.plan) {
+      const pl = e.plan, used = model.time - pl.startT;
+      const goals = pl.goals.map((g) => `${pl.done.includes(g) ? '✓' : '○'} ${model.place(g)?.label || g}${!pl.done.includes(g) && e.mind.byKey.has(g) ? ' (knows where)' : ''}`).join(' · ');
+      const status = { exploring: 'exploring to find places', heading: `heading to ${e.mind.byKey.get(pl.target)?.label || 'a place'}`, returning: `going back to ${e.mind.byKey.get('start')?.label || 'the start'}` }[pl.status];
+      rows.push(['Goals', goals], ['Plan', status], ['Time', `${used} of ${pl.budget} min`], ['Walked', `${Math.round(pl.distance).toLocaleString()} ft`],
+        ['Knows', `${fmt((e.mind.known / model.kcells) * 100, 1)}% of the park · ${e.mind.landmarks.length} landmarks`],
+        ['Has seen', `${e.mind.others.size} other agents nearby`]);
+      if (pl.told) flags.push([`Got directions ${pl.told} time${pl.told > 1 ? 's' : ''}`]);
+    }
     if (e.goal?.type === 'boat') flags.push(e.waitingBoat ? ['Waiting: lake overflowing', true] : ['Heading to boat landing']);
     if (e.evacuating) flags.push(['Moving to dry or open ground']);
     if (e.stranded) flags.push(['Stranded by flooding', true]);
@@ -134,6 +145,7 @@ function describe(e) {
     if (k === 'skimmer') rows.push(['Target', !e.target ? 'none' : e.target.type === 'litter' ? `Floating litter ${e.target.id}` : `Duckweed cell ${model.layout.grid.cells[e.target.id].id} (${fmt(model.duckweed[e.target.id], 0)}%)`]);
     if (k !== 'skimmer') rows.push(['Location', regionName(e.location)]);
     rows.push(['Doing', model.taskText(e)], ['Driven', `${Math.round(e.distance).toLocaleString()} ft`]);
+    if (e.mind) rows.push(['Knows', `${fmt((e.mind.known / model.kcells) * 100, 1)}% of the park · ${e.mind.landmarks.length} landmarks`], ['Has seen', `${e.mind.others.size} other agents nearby`]);
     if (e.note) flags.push([e.note]);
     const names = { mower: 'Mower robot', steward: 'Steward robot', skimmer: 'Skimmer robot' };
     return { title: `${names[k]} ${e.id}`, rows, flags };
@@ -154,7 +166,8 @@ function renderInspector() {
   $('insp-kind').textContent = d.title;
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   $('insp-body').innerHTML = `<table>${d.rows.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join('')}</table>` +
-    d.flags.map(([t, bad]) => `<span class="flag${bad ? ' bad' : ''}">${esc(t)}</span>`).join('');
+    d.flags.map(([t, bad]) => `<span class="flag${bad ? ' bad' : ''}">${esc(t)}</span>`).join('') +
+    (e.mind ? `<button class="know-btn${view.knowledge.mode === 'agent' ? ' on' : ''}" data-know>${view.knowledge.mode === 'agent' ? 'Hide what they know' : 'Show what they know'}</button>` : '');
 }
 
 function renderLog() {
@@ -174,6 +187,7 @@ function renderStatus() {
   $('st-weed').textContent = `Weeds ${fmt(model.woods.weedCover, 0)}%`;
   $('btn-rain').textContent = `Rain: ${rain}`;
   renderGoal();
+  renderVisitors();
 }
 
 function renderGoal() {
@@ -198,6 +212,33 @@ function renderGoal() {
   $('history').textContent = model.history.length ? `Past days: ${model.history.slice(-5).map((h) => `day ${h.day} ${h.met ? 'met' : 'missed'}`).join(', ')}` : '';
   $('btn-auto').textContent = `Auto: ${model.autoRobots ? 'on' : 'off'}`;
   $('btn-auto').classList.toggle('on', model.autoRobots);
+}
+
+function renderVisitors() {
+  const v = model.visitorStats(), pc = (x) => `${Math.round(x * 100)}%`;
+  $('visitors').innerHTML = `<div>${v.inPark} in the park: ${v.exploring} exploring, ${v.heading} heading to a place, ${v.returning} going back</div>` +
+    `<div>They know ${pc(v.known)} of the park each, on average. Robots share a map of ${pc(v.fleetKnown)}; ${v.reported} problems reported.</div>` +
+    (v.left ? `<div>${v.left} have left: ${pc(v.places)} of their places seen, ${pc(v.allSeen)} saw them all, ${pc(v.onTime)} on time · ${Math.round(v.minutes)} min, ${Math.round(v.distance).toLocaleString()} ft walked</div>` : '<div class="muted">No one has finished a visit yet.</div>');
+}
+
+let treesBeforeOverlay = null;
+function setOverlay(mode) {
+  view.knowledge.setMode(mode);
+  // Maps read better from above without the tree canopy.
+  if (mode !== 'off' && treesBeforeOverlay === null) { treesBeforeOverlay = view.trees.visible; view.setTreesVisible(false); }
+  if (mode === 'off' && treesBeforeOverlay !== null) { view.setTreesVisible(treesBeforeOverlay); treesBeforeOverlay = null; }
+  $('btn-trees').classList.toggle('on', view.trees.visible);
+  $('overlay').value = mode;
+  $('overlay-key').innerHTML = {
+    agent: `Dark: unknown to them · <i style="background:#dc3c3c"></i>blocked · <i style="background:#3c82eb"></i>water · <i style="background:#ffe65a"></i>in view now. Pins are their landmarks: ${Object.entries(LANDMARK_COLORS).map(([k, c]) => `<i style="background:${c}"></i>${k}`).join(' ')}. An × marks another agent where they last saw it.`,
+    fleet: 'Dark: no robot has seen it yet. Robots merge maps when they charge.',
+    paths: 'Every step any visitor or robot has walked. Darker red: more steps.',
+    landmarks: 'Where agents saved landmarks: places, hindrances, issues and signposts. Darker: more agents.',
+    shared: 'How many of the visitors in the park know each spot. Darker blue: most of them.',
+    off: '',
+  }[mode] || '';
+  if (mode === 'agent' && !(selected() && selected().mind)) toast('Select a person or robot to see what it knows.');
+  renderInspector();
 }
 
 function updateButtons() {
@@ -230,6 +271,7 @@ function run(action) {
     case 'addMower': res = model.addRobotAction('mower'); break;
     case 'addSteward': res = model.addRobotAction('steward'); break;
     case 'addSkimmer': res = model.addRobotAction('skimmer'); break;
+    case 'addVisitors': res = model.addVisitors(25); break;
     case 'rain': res = model.cycleRain(); break;
     case 'advance': advance(); break;
     case 'play':
@@ -251,12 +293,16 @@ function run(action) {
   if (res && !res.ok) toast(res.msg);
   else if (res && res.msg) toast(res.msg, true);
   if (res && res.entity && ['addPerson', 'addMower', 'addSteward', 'addSkimmer'].includes(action)) select({ kind: res.entity.kind, id: res.entity.id });
+  if (action === 'reset') setOverlay(view.knowledge.mode);
   renderLog();
   renderInspector();
 }
 
 document.querySelectorAll('#toolbar [data-action]').forEach((b) => b.addEventListener('click', () => run(b.dataset.action)));
 $('insp-close').addEventListener('click', () => select(null));
+$('insp-body').addEventListener('click', (ev) => { if (ev.target.closest('[data-know]')) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent'); });
+$('overlay').innerHTML = Object.entries(OVERLAYS).map(([k, t]) => `<option value="${k}">${t}</option>`).join('');
+$('overlay').addEventListener('change', (ev) => setOverlay(ev.target.value));
 
 // ---------- robot center monitor ----------
 let monitorT = null;
@@ -320,6 +366,7 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === ' ') { ev.preventDefault(); run('play'); }
   if (ev.key === 'Escape') { if (!$('monitor').hidden) setMonitor(false); else select(null); }
   if (ev.key === 'm') run('monitor');
+  if (ev.key === 'k' && selected()?.mind) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent');
 });
 
 // ---------- loop ----------
@@ -342,3 +389,4 @@ requestAnimationFrame(frame);
 window.__model = model;
 window.__view = view;
 window.__select = select;
+window.__overlay = setOverlay;

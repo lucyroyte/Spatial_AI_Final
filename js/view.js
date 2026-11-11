@@ -7,6 +7,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import * as G from './geometry.js';
 import { RULES } from './model.js';
 import { drawRobotMap, ROBOT_COLORS } from './monitor.js';
+import { KnowledgeLayer } from './knowledge.js';
 
 const w = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
 
@@ -123,6 +124,7 @@ export class View {
     this.entityScale = 1;
     this.buildStatic();
     this.buildDynamicLayers();
+    this.knowledge = new KnowledgeLayer(this.scene, model);
 
     window.addEventListener('resize', () => this.resize());
   }
@@ -755,6 +757,7 @@ export class View {
     this.updateLines(lakeY);
     this.updateTrails(lakeY);
     this.updateScreen(dt);
+    this.knowledge.update(dt, selection, this.entityScale);
     this.updateSelection(selection, lakeY);
   }
 
