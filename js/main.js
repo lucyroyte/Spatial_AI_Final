@@ -4,6 +4,7 @@ import { View } from './view.js';
 import { loadLayout } from './layout.js';
 import { drawRobotMap, ROBOT_COLORS, batteryColor } from './monitor.js';
 import { OVERLAYS, LANDMARK_COLORS } from './knowledge.js';
+import { setupDesigner } from './designer-ui.js';
 
 const $ = (id) => document.getElementById(id);
 let layout;
@@ -153,8 +154,27 @@ function describe(e) {
   return { title: e.id, rows, flags };
 }
 
+// The toolbar's actions for a selected thing, repeated in its panel.
+const CONTEXT_ACTIONS = {
+  person: [['addDog', 'Add dog'], ['changeActivity', 'Change activity'], ['goBoating', 'Go boating'], ['dropLitter', 'Drop litter'], ['removePerson', 'Remove']],
+  fence: [['breakFence', 'Break fence']],
+  lawn: [['mowLawn', 'Mow'], ['reseedLawn', 'Reseed'], ['toggleLawn', 'Open/close']],
+};
+
+// Only rebuilt when the selection changes, so a click isn't lost to a re-render.
+let actionsFor = null;
+function renderActions(e) {
+  const key = e ? e.kind : null;
+  if (key === actionsFor) return;
+  actionsFor = key;
+  const acts = e && CONTEXT_ACTIONS[e.kind];
+  $('insp-actions').hidden = !acts;
+  $('insp-actions').innerHTML = acts ? acts.map(([a, t]) => `<button data-act="${a}">${t}</button>`).join('') : '';
+}
+
 function renderInspector() {
   const e = selected();
+  renderActions(e);
   $('insp-close').hidden = !e;
   $('inspector').classList.toggle('empty', !e);
   if (!e) {
@@ -287,6 +307,7 @@ function run(action) {
       break;
     case 'auto': res = model.toggleAuto(); break;
     case 'monitor': setMonitor($('monitor').hidden); break;
+    case 'about': setAbout($('about').hidden); break;
     case 'trees': view.setTreesVisible(!view.trees.visible); $('btn-trees').classList.toggle('on', view.trees.visible); break;
     case 'reset': model.reset(); $('budget').value = model.budget / 1000; select(null); toast('Example scene restored.', true); break;
   }
@@ -300,7 +321,29 @@ function run(action) {
 
 document.querySelectorAll('#toolbar [data-action]').forEach((b) => b.addEventListener('click', () => run(b.dataset.action)));
 $('insp-close').addEventListener('click', () => select(null));
-$('insp-body').addEventListener('click', (ev) => { if (ev.target.closest('[data-know]')) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent'); });
+$('insp-body').addEventListener('click', (ev) => {
+  if (ev.target.closest('[data-know]')) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent');
+});
+$('insp-actions').addEventListener('click', (ev) => { const b = ev.target.closest('[data-act]'); if (b) run(b.dataset.act); });
+
+// ---------- about and the environment designer ----------
+function setAbout(open) {
+  $('about').hidden = !open;
+  $('btn-about').classList.toggle('on', open);
+  if (!open) { try { localStorage.setItem('cps-about-seen', '1'); } catch (e) { /* private mode */ } }
+}
+$('about-close').addEventListener('click', () => setAbout(false));
+const designer = setupDesigner({
+  model, toast,
+  openInPark(env, label) {
+    model.reset(env);
+    $('budget').value = model.budget / 1000;
+    select(null);
+    setOverlay(view.knowledge.mode);
+    renderLog();
+    toast(`${label} is now running in the park. Reset returns to the example scene.`, true);
+  },
+});
 $('overlay').innerHTML = Object.entries(OVERLAYS).map(([k, t]) => `<option value="${k}">${t}</option>`).join('');
 $('overlay').addEventListener('change', (ev) => setOverlay(ev.target.value));
 
@@ -364,7 +407,12 @@ window.addEventListener('keydown', (ev) => {
   if (ev.target.tagName === 'INPUT') return;
   if (ev.key === 'f' && selected()) { const e = selected(); const p = e.anchor || e.position || e; view.focus(p.x, p.y); }
   if (ev.key === ' ') { ev.preventDefault(); run('play'); }
-  if (ev.key === 'Escape') { if (!$('monitor').hidden) setMonitor(false); else select(null); }
+  if (ev.key === 'Escape') {
+    if (!$('designer').hidden) designer.open(false);
+    else if (!$('about').hidden) setAbout(false);
+    else if (!$('monitor').hidden) setMonitor(false);
+    else select(null);
+  }
   if (ev.key === 'm') run('monitor');
   if (ev.key === 'k' && selected()?.mind) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent');
 });
@@ -382,6 +430,9 @@ function frame(now) {
 }
 renderStatus(); renderLog(); updateButtons();
 if (window.innerWidth > 760) $('legend').querySelector('details').open = true;
+let aboutSeen = false;
+try { aboutSeen = localStorage.getItem('cps-about-seen') === '1'; } catch (e) { /* private mode */ }
+if (!aboutSeen) setAbout(true);
 $('loading').remove();
 requestAnimationFrame(frame);
 

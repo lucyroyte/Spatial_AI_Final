@@ -101,3 +101,10 @@ export function drawRobotMap(ctx, model, W, H, opts = {}) {
   }
   return T;
 }
+
+// Just the park, for other small maps (the environment designer's cards).
+export function drawParkBase(ctx, L, W, H, pad = 8) {
+  const { canvas, T } = baseMap(L, W, H, pad);
+  ctx.drawImage(canvas, 0, 0);
+  return T;
+}

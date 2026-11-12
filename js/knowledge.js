@@ -76,7 +76,7 @@ export class KnowledgeLayer {
     this.signs = new THREE.Group();
     const post = new THREE.CylinderGeometry(0.25, 0.25, 7, 6), board = new THREE.BoxGeometry(3.2, 1.1, 0.25);
     const wood = new THREE.MeshLambertMaterial({ color: '#7c5a3a' }), face = new THREE.MeshLambertMaterial({ color: '#166534' });
-    for (const sp of m.signposts || []) {
+    for (const sp of m.allSignposts || []) {
       const g = new THREE.Group();
       const p = new THREE.Mesh(post, wood); p.position.y = 3.5; g.add(p);
       for (const [i, pt] of sp.points.slice(0, 3).entries()) {
@@ -119,7 +119,8 @@ export class KnowledgeLayer {
     if (key !== this.lastKey || this.t > 0.4) { this.t = 0; this.lastKey = key; this.paint(agent); }
     this.drawCone(agent, scale);
     this.drawAgentExtras(this.mode === 'agent' ? agent : null, scale);
-    this.signs.children.forEach((g) => g.scale.setScalar(Math.min(3, scale)));
+    const up = new Set(this.model.signposts.map((sp) => sp.id));
+    this.signs.children.forEach((g) => { g.visible = up.has(g.userData.ref.id); g.scale.setScalar(Math.min(3, scale)); });
   }
 
   // Fill the overlay texture for the current mode.

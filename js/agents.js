@@ -43,7 +43,7 @@ export const AgentBehaviors = {
     if (!this.woodsDist) this.woodsDist = L.distanceField((c) => L.label[c] === L.woods.index);
     if (!this.places) this.places = this.buildPlaces();
     if (!this.entrances) this.entrances = this.findEntrances();
-    if (!this.signposts) this.signposts = this.findSignposts();
+    if (!this.allSignposts) this.allSignposts = this.signposts = this.findSignposts();
   },
 
   // Places a visitor may want to see, and how they know they've seen it.
