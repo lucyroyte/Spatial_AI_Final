@@ -330,7 +330,6 @@ $('insp-actions').addEventListener('click', (ev) => { const b = ev.target.closes
 function setAbout(open) {
   $('about').hidden = !open;
   $('btn-about').classList.toggle('on', open);
-  if (!open) { try { localStorage.setItem('cps-about-seen', '1'); } catch (e) { /* private mode */ } }
 }
 $('about-close').addEventListener('click', () => setAbout(false));
 const designer = setupDesigner({
@@ -430,9 +429,7 @@ function frame(now) {
 }
 renderStatus(); renderLog(); updateButtons();
 if (window.innerWidth > 760) $('legend').querySelector('details').open = true;
-let aboutSeen = false;
-try { aboutSeen = localStorage.getItem('cps-about-seen') === '1'; } catch (e) { /* private mode */ }
-if (!aboutSeen) setAbout(true);
+
 $('loading').remove();
 requestAnimationFrame(frame);
 

@@ -18,7 +18,7 @@ Static files only: vanilla JavaScript, with three.js loaded from a CDN through a
 - Drag to orbit, right-drag to pan, scroll to zoom. Select something and press **F** to fly to it.
 - Click a person, dog, boat, robot, lawn, fence segment, litter item or the robot center to see its attributes. Paths, the Ramble, the Lake, the gate and the boat landing can be clicked too.
 - The bottom-left panel shows rain, the lake level, the clock, the **daily goal** and what the **robot controller** is doing.
-- **Design environments** opens the environment designer (below). **About** shows the thesis and how the site meets the brief.
+- **Design environments** opens the environment designer (below). **About** is a short introduction.
 - **Auto** turns the controller on or off. **Budget** caps the total price of the fleet.
 - **Step** advances one minute; **Fast** runs 10 minutes per tick.
 - **More actions** holds the rest of the spec's toolbar: adding and removing people, dogs, boating, litter, fences, mowing, reseeding, closing lawns, adding robots, and hiding trees. The ones for a selected person, lawn or fence also show in its panel.
@@ -26,7 +26,7 @@ Static files only: vanilla JavaScript, with three.js loaded from a CDN through a
 
 ## The environment designer
 
-The designer is the simulation's primary function. An **environment** is what a park designer could change:
+An **environment** is what a park designer could change:
 
 - which of the 32 **signposts** stand (affordances: a visitor who reads one learns where the places it points to are);
 - which **lawns are closed** for restoration (obstacles to walkers, but no wear);

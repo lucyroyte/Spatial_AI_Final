@@ -1,4 +1,4 @@
-// The environment designer panel: the primary function of the simulation.
+// The environment designer panel.
 //
 // Manual: two variations of the current environment run side by side; keep
 // one and two new variations are made from it.
