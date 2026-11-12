@@ -141,31 +141,18 @@
 
   <section id="about" class="sheet" hidden aria-label="About this simulation">
     <div class="panel-head">
-      <span>About this simulation</span>
+      <span>About</span>
       <button id="about-close" aria-label="Close">×</button>
     </div>
     <div class="sheet-body">
-      <p class="thesis"><b>Thesis.</b> In a park where nobody holds the whole map, the layout is the information. Visitors and maintenance robots only know what they have seen, so where the signposts stand, which lawns are open and how the money is split decide both whether visitors find what they came for and whether the robots can keep the park presentable. Those two goals pull against each other: a dollar of signage is a dollar not spent on robots, and a lawn closed to rest its grass is a lawn a visitor can't reach. So a good park can't be laid out by intuition. It has to be searched for, by running agents with limited knowledge through each arrangement and comparing how they do.</p>
-      <h3>What you're looking at</h3>
-      <p>The Lake and the Ramble in Central Park, rebuilt from NYC Open Data. Visitors come in at the entrances knowing only the spot where they arrived and look for 2 to 4 places before their time runs out. Mowers, stewards and skimmers keep the lawns, the woods and the lake presentable from a charging center at Cherry Hill. Select anyone to see their cone of vision, then press <b>K</b> to see the map they have built.</p>
-      <h3>How to design an environment</h3>
-      <ol>
-        <li>Open <b>Design environments</b>. Two variations of the park run side by side on the same visitors and weather.</li>
-        <li>Keep the one you like; two new variations are made from it. Or switch to <b>Evolve automatically</b> and give it a number of epochs.</li>
-        <li><b>Open in park</b> loads any environment here, so you can watch its agents.</li>
-      </ol>
-      <h3>How it meets the brief</h3>
-      <dl class="brief">
-        <dt>Semantic model</dt><dd>SPEC.md; the example scene is its baseline.</dd>
-        <dt>Location</dt><dd>Position in feet on the real map; the region an occupant is in (lawn, path, woods, lake or boat); a cell on the 5 ft grid; and, in each agent's own map, places saved relative to a landmark ("120 ft north of Cherry Hill").</dd>
-        <dt>Distance</dt><dd>Straight-line feet (vision range, signposts, the 25 ft for asking directions); walking distance along A* routes (feet walked); travel time in minutes, slowed by terrain (the visit budget); and distance from the shore for flooding.</dd>
-        <dt>Agents</dt><dd>Visitors and robots (mowers, stewards, skimmers). Each sees through a cone, builds a map, saves landmarks, plans on what it knows, and has a goal with a score: places seen on time for visitors, the daily goal for robots.</dd>
-        <dt>Environment</dt><dd>Physical, partially observable, multi-agent, dynamic (grass, weeds, duckweed and rain) and non-deterministic (random personalities and chances, seeded so comparisons are fair).</dd>
-        <dt>Obstacles</dt><dd>Buildings, plantings, the Ramble's fence, closed or flooded lawns, and other agents.</dd>
-        <dt>Hindrances and affordances</dt><dd>Walkers move at full speed on paths, 80% on lawns, 60% in the Ramble and 50% on wet ground. Signposts and broken fences are affordances; flooded ground is a hindrance.</dd>
-        <dt>Primary function</dt><dd>The environment designer: side-by-side choices and automated epochs.</dd>
-        <dt>Real data</dt><dd>NYC Open Data: land cover, the lake, trails, paths and elevation points, so each lawn and path has a real height. Time runs minute by minute, 6:00 to 22:00.</dd>
-      </dl>
+      <p class="thesis">In a park where nobody holds the whole map, the layout is the information. The visitors and maintenance robots here only know what they have seen, so where the signposts stand, which lawns are open and how the money is split decide both whether visitors find what they came for and whether the robots can keep the park looking good. Those goals pull against each other, so we don't try to guess the best layout. We search for it by running the park.</p>
+      <p>This is the Lake and the Ramble in Central Park, rebuilt from NYC Open Data. Visitors come in at the entrances, look for a few places before their time runs out, and find their way back. Mowers, stewards and skimmers work out of a charging center at Cherry Hill.</p>
+      <ul>
+        <li>Click anyone to see their cone of vision, and press <b>K</b> to see the map they've built.</li>
+        <li><b>Design environments</b> runs two versions of the park side by side so you can pick one, or evolves them on its own for as many rounds as you like.</li>
+        <li><b>Open in park</b> loads a version here so you can watch it.</li>
+      </ul>
+      <p class="muted">By Lucy and Jay.</p>
     </div>
   </section>
 

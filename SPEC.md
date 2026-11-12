@@ -194,7 +194,7 @@ Color grass by height, from short and light green to tall and dark green, and bl
 
 ## Addendum: spatial agents and environment design
 
-*Added for the final submission. It describes what the site now models beyond the original spec above; the original text is unchanged.*
+*What the site models beyond the original spec above.*
 
 **Thesis.** In a park where nobody holds the whole map, the layout is the information. Visitors and maintenance robots only know what they have seen, so where the signposts stand, which lawns are open and how the money is split decide both whether visitors find what they came for and whether the robots can keep the park presentable. Those goals pull against each other, so a good park has to be searched for by simulation rather than laid out by intuition.
 

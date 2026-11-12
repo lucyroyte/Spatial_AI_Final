@@ -212,8 +212,6 @@ details.more .menu p { margin: 0; font-size: 11px; }
 .sheet p, .sheet li { line-height: 1.5; }
 .sheet ol { padding-left: 20px; margin: 4px 0; }
 .thesis { font-size: 14px; border-left: 3px solid var(--accent); padding-left: 10px; margin: 4px 0 8px; }
-dl.brief { display: grid; grid-template-columns: 150px 1fr; gap: 4px 12px; margin: 4px 0; }
-dl.brief dt { font-weight: 600; } dl.brief dd { margin: 0; color: var(--muted); }
 .des-intro { margin: 0 0 8px; }
 .des-settings, .des-row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 8px 0; }
 .sheet label { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
@@ -246,5 +244,4 @@ dl.brief dt { font-weight: 600; } dl.brief dd { margin: 0; color: var(--muted); 
 #des-download { margin-top: 10px; }
 @media (max-width: 760px) {
   .sheet { top: 6px; max-height: calc(100vh - 12px); }
-  dl.brief { grid-template-columns: 1fr; } dl.brief dd { margin-bottom: 6px; }
 }
