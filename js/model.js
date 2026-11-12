@@ -33,7 +33,11 @@ export const RULES = {
   // Robots, batteries and the controller.
   BATTERY: { move: 0.22, work: 0.22, idle: 0.03, charge: 3, reserve: 8 },
   PRICE: { mower: 18000, steward: 12000, skimmer: 15000 },
-  BUDGET: 150000,
+  BUDGET: 150000,           // for robots; an environment's total budget also pays for its signposts
+  SIGN_PRICE: 2000,
+  // Hindrances and affordances for walkers: how fast a person moves on each kind of ground.
+  TERRAIN: { path: 1, lawn: 0.8, woods: 0.6, wet: 0.5 },   // wet: over 1" of standing water
+  WET_AT: 1,
   TRAIL_MINUTES: 240,
   CONTROLLER_EVERY: 5,
   // The daily goal.
@@ -64,11 +68,16 @@ export class Model {
   }
 
   // ---------- setup ----------
-  reset() {
+  // An environment is what the designer controls (see designer.js): which
+  // signposts stand, which lawns are closed, the total budget, how many
+  // visitors arrive and the weather. With none, the example scene loads.
+  reset(env = null) {
     const L = this.layout;
-    this.rand = G.mulberry32(20261105);
+    this.env = env;
+    this.rand = G.mulberry32(env?.seed ?? 20261105);
     this.time = 0;
     this.setupAgents();
+    this.signposts = env?.signs ? this.allSignposts.filter((_, i) => env.signs[i]) : this.allSignposts;
     this.ids = {};
     this.log = [];
     this.alerts = [];
@@ -86,6 +95,7 @@ export class Model {
     this.lawns[0].grassHeight = 16.5; // the biggest lawn needs mowing
     const sm = this.lawns.find((l) => l.id === small.id);
     sm.wear = 60; sm.grassHeight = 11;
+    for (const l of this.lawns) if (env?.closed?.includes(l.id)) l.status = 'closed';
     this.smallLawn = sm;
     this.regions = [this.lake, this.woods, ...this.paths, ...this.lawns];
     this.byId = Object.fromEntries(this.regions.map((r) => [r.id, r]));
@@ -113,7 +123,7 @@ export class Model {
 
     this.people = []; this.dogs = []; this.boats = []; this.litter = [];
     this.mowers = []; this.stewards = []; this.skimmers = [];
-    this.budget = RULES.BUDGET;
+    this.budget = env?.budget != null ? Math.max(0, env.budget * 1000 - this.signCost()) : RULES.BUDGET;
     this.autoRobots = true;
     this.controllerNote = 'Watching the park.';
 
@@ -155,7 +165,26 @@ export class Model {
     this.day = { number: 1, steps: 0, ok: { lawns: 0, woods: 0, lake: 0 }, now: this.presentable() };
     this.visitorTarget = this.people.length;
     this.history = [];
-    this.note('Example scene loaded: the Lake and the Ramble, Central Park.');
+    if (env?.visitors) this.addVisitors(env.visitors);
+    this.note(env ? `Environment loaded: ${this.signposts.length} signposts, ${env.closed?.length || 0} lawns closed, $${env.budget}k budget.` : 'Example scene loaded: the Lake and the Ramble, Central Park.');
+  }
+  signCost() { return this.signposts.length * RULES.SIGN_PRICE; }
+
+  // An environment's weather plan, by minute of the day.
+  stepWeatherPlan() {
+    const plan = { shower: [90, 180, 'light'], storm: [120, 210, 'heavy'] }[this.env?.rain];
+    if (!plan) return;
+    const t = this.day.steps;
+    this.weather.rainIntensity = t >= plan[0] && t < plan[1] ? plan[2] : 'none';
+  }
+
+  // Walking speed on the ground under a person: paths are fastest; lawns,
+  // the Ramble's undergrowth and wet ground slow them down.
+  terrainSpeed(p) {
+    const T = RULES.TERRAIN, r = this.byId[p.location];
+    let f = r ? (T[r.kind] ?? 1) : 1;
+    if (r && r.standingWater > RULES.WET_AT) f = Math.min(f, T.wet);
+    return RULES.SPEED.person * f;
   }
 
   newId(prefix) { this.ids[prefix] = (this.ids[prefix] || 0) + 1; return `${prefix}${this.ids[prefix]}`; }
@@ -401,6 +430,7 @@ export class Model {
   advance() {
     this.time++;
     this.alerts = [];
+    this.stepWeatherPlan();
     this.stepWater();
     for (const p of this.people) this.stepPerson(p);
     for (const d of this.dogs) this.stepDog(d);
@@ -460,7 +490,7 @@ export class Model {
       }
     }
     if (p.evacuating) {
-      this.moveAlong(p, RULES.SPEED.person);
+      this.moveAlong(p, this.terrainSpeed(p));
       if (!p.route.length) p.evacuating = false;
       return;
     }
@@ -481,7 +511,7 @@ export class Model {
       if (!this.people.includes(p)) return;
     }
     const before = { x: p.x, y: p.y };
-    const res = this.moveAlong(p, RULES.SPEED.person);
+    const res = this.moveAlong(p, this.terrainSpeed(p));
     p.plan.distance += G.dist(before, p);
     if (res === 'blocked') {
       // Bumped into something unseen: remember it and plan again.

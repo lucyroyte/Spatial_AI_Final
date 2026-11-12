@@ -189,3 +189,49 @@ Render a stylized section of Central Park with a lake in the center, a fenced wo
 Start with no rain and the lake level just below its rim. Start with 14 people: 6 walking on paths (2 of them with dogs), 3 sitting on lawns, 1 standing on a lawn with a dog, 2 walking in the woods, and 2 rowing one boat on the lake. Start with 2 broken fence segments so the people in the woods can get out. Give the lawns different starting grass heights so at least one needs mowing, and give the smaller lawn a wear of 60 percent so heavy use or rain pushes it into needing reseeding. Start the woods at 40 percent weed cover and the lake at 20 percent duckweed cover, clustered in patches. Scatter 6 litter items across the lawns, paths, woods, and lake. Start with 1 mower robot and 1 steward robot idle on paths, and 1 skimmer robot idle on the lake.
 
 Color grass by height, from short and light green to tall and dark green, and blend in brown patches as wear rises. Show closed lawns with a fence or hatching, and reseeding lawns with a pale straw color and a different hatching. Draw standing water as a translucent blue layer whose opacity rises with depth, and show falling rain as streaks whose density matches the rain intensity. Draw the woods as trees over an understory whose color shifts from brown leaf litter to bright weedy green as weed cover rises. Draw the lake as blue water with duckweed drawn cell by cell, and show each boat's wake as a V-shaped trail of open water. Show intact fence segments as wooden posts and rails, and broken segments as gaps with red markers. Show litter as small bright specks. Color people by activity, and draw dogs as small figures with a thin leash line to their owner. Give the mower, steward, and skimmer robots distinct shapes and colors, and show each robot's current target with a thin line.
+
+---
+
+## Addendum: spatial agents and environment design
+
+*Added for the final submission. It describes what the site now models beyond the original spec above; the original text is unchanged.*
+
+**Thesis.** In a park where nobody holds the whole map, the layout is the information. Visitors and maintenance robots only know what they have seen, so where the signposts stand, which lawns are open and how the money is split decide both whether visitors find what they came for and whether the robots can keep the park presentable. Those goals pull against each other, so a good park has to be searched for by simulation rather than laid out by intuition.
+
+### More entities
+
+* **Visitor** (a person who arrives during the simulation)
+  * entrance (one of the entrances where paths leave the map)
+  * goals (2 to 4 places to see: named lawns, sights, the Lake, the Ramble)
+  * time budget (90 to 180 minutes)
+  * map (a 10 ft grid of what they have seen: unknown, open, blocked or water)
+  * landmarks (places, hindrances, issues and affordances they have saved, each with where it is relative to something they already know)
+  * performance: share of goals seen, whether they left within their budget, distance walked
+* **Robot knowledge:** each robot has its own map; robots merge maps with the fleet's shared map when they charge, and report issues (litter, broken fences) to the robot center's job board.
+* **Signpost** (position; the places within about 900 ft that it points to)
+* **Sight** (a landmark visible from a distance, like Bow Bridge or Belvedere Castle; position and how far off it can be seen)
+* **Environment** (what a designer controls)
+  * which signposts stand
+  * which lawns are closed
+  * total budget in $k (signposts cost $2k each; the rest buys robots)
+  * test conditions: number of visitors, weather plan (dry, a shower, a storm), random seed
+
+### Location and distance
+
+* **Location:** an occupant has a position in feet (real map coordinates), a region (the lawn, path, woods, lake or boat it is in), a cell on the 5 ft grid, and, in an agent's own map, a position relative to its landmarks.
+* **Distance:** straight-line feet (vision range, signpost reach, asking for directions within 25 ft); walking distance along A* routes; travel time in minutes, slowed by terrain; distance from the shore (for flooding).
+
+### More rules
+
+* Each agent sees through a cone (people 120° and 90 ft; stewards 140° and 150 ft; mowers 100° and 100 ft; skimmers 360° and 70 ft). Plantings and buildings block sight, and the Ramble's undergrowth shortens it.
+* Agents plan routes on their own maps and treat unknown ground as walkable until they see otherwise. A visitor heads back when the time left is only just enough to walk out, and walks back through ground and landmarks they know. A robot heads home when its battery only just covers the trip.
+* Visitors who meet may ask for directions and copy a landmark. Reading a signpost teaches a visitor where the places it points to are.
+* Other agents are obstacles: an agent steps aside or waits, then squeezes past.
+* **Hindrances and affordances:** people walk at full speed on paths, 80% on lawns, 60% in the Ramble and 50% on ground with over 1″ of standing water. Ground with over 3″ of water, and closed lawns, cannot be entered. Signposts, broken fences (for people) and the gate (for stewards) are affordances.
+
+### Environment design
+
+* **Score:** 50 × visitor performance (60% places seen, 40% on time) + 50 × park performance (average share of time the lawns, woods and lake were presentable) − 0.04 per $1k spent.
+* **Variation:** one to three changes to an environment: add or remove a signpost, close or open a lawn (at most 5 closed), or move the budget by $20k (between $80k and $320k).
+* **Side by side:** two variations of the current environment run on the same test conditions. The designer keeps one, and two new variations are made from it.
+* **Automated:** for a given number of epochs, make two variations of the current environment, run them on the same test conditions, and keep whichever of the three scores best.

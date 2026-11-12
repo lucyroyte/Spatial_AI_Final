@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Central Park Section</title>
-  <meta name="description" content="A three.js simulation of the Lake and the Ramble in Central Park, built from NYC Open Data: people, dogs, boats, rain, and a fleet of maintenance robots working toward a daily goal.">
+  <meta name="description" content="A three.js simulation of the Lake and the Ramble in Central Park, built from NYC Open Data, where visitors and robots only know what they have seen, with an environment designer that generates, compares and evolves park layouts.">
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
     {
@@ -19,46 +19,62 @@
   <div id="scene"></div>
 
   <header id="toolbar" role="toolbar" aria-label="Actions">
-    <div class="brand"><strong>Central Park Section</strong><span>The Lake &amp; the Ramble · NYC Open Data</span></div>
-    <div class="group" aria-label="People">
-      <span class="group-label">People</span>
-      <button data-action="addPerson" title="Place a new walking person on a random path">Add person</button>
-      <button data-action="removePerson" data-needs="person" title="Remove the selected person and their dog">Remove person</button>
-      <button data-action="addDog" data-needs="person" title="Give the selected person a dog">Add dog</button>
-      <button data-action="changeActivity" data-needs="person" title="Cycle walking, standing, sitting">Change activity</button>
-      <button data-action="goBoating" data-needs="person" title="Send the selected person to the boat landing">Go boating</button>
-      <button data-action="dropLitter" data-needs="person" title="Drop litter near the selected person">Drop litter</button>
+    <div class="brand"><strong>Central Park Section</strong><span>Designing a park for agents who only know what they've seen</span></div>
+    <div class="group">
+      <button id="btn-design" class="primary" title="Generate, compare and evolve park layouts">Design environments</button>
+      <button data-action="about" id="btn-about" title="The thesis and how to read the simulation">About</button>
     </div>
-    <div class="group" aria-label="Park">
-      <span class="group-label">Park</span>
-      <button data-action="breakFence" data-needs="fence" title="Break the selected fence segment">Break fence</button>
-      <button data-action="mowLawn" data-needs="lawn" title="Send the nearest idle mower to the selected lawn">Mow lawn</button>
-      <button data-action="reseedLawn" data-needs="lawn" title="Send the nearest idle mower to reseed the selected lawn">Reseed lawn</button>
-      <button data-action="toggleLawn" data-needs="lawn" title="Open or close the selected lawn">Open/close lawn</button>
-    </div>
-    <div class="group" aria-label="Robots">
-      <span class="group-label">Robots</span>
-      <button data-action="addMower" title="Add an idle mower robot on a random path"><i class="sw mower"></i>Add mower</button>
-      <button data-action="addSteward" title="Add an idle steward robot on a random path"><i class="sw steward"></i>Add steward</button>
-      <button data-action="addSkimmer" title="Add an idle skimmer robot on the lake"><i class="sw skimmer"></i>Add skimmer</button>
-      <button data-action="monitor" id="btn-monitor" title="Open the robot center's monitor: where every robot is, what it's doing, where it has been and its battery">Robot monitor</button>
-      <button data-action="auto" id="btn-auto" class="on" title="Let the robot controller deploy, buy and park robots">Auto: on</button>
-      <label class="budget" title="Robot budget: the total price of the fleet can't go over it">Budget $<input id="budget" type="number" min="0" max="999" step="10" value="150">k</label>
+    <div class="group" aria-label="Time">
+      <span class="group-label">Time</span>
+      <button data-action="play" id="btn-play" title="Run time continuously (Space)">Play</button>
+      <button data-action="advance" title="Advance one time step (one minute)">Step</button>
+      <button data-action="fast" id="btn-fast" title="Run 10 steps per tick">Fast</button>
+      <button data-action="rain" id="btn-rain" title="Cycle rain: none, light, heavy">Rain: none</button>
+      <button data-action="reset" title="Return to the example scene">Reset</button>
     </div>
     <div class="group" aria-label="Agents">
       <span class="group-label">Agents</span>
       <button data-action="addVisitors" title="25 more visitors come in at the park entrances. Each one only knows where it came in.">Add 25 visitors</button>
       <label class="overlay" title="Show what agents know and share">Show <select id="overlay"></select></label>
     </div>
-    <div class="group" aria-label="Time">
-      <span class="group-label">Time</span>
-      <button data-action="rain" id="btn-rain" title="Cycle rain: none, light, heavy">Rain: none</button>
-      <button data-action="advance" title="Advance one time step">Advance time</button>
-      <button data-action="play" id="btn-play" title="Run time continuously">Play</button>
-      <button data-action="fast" id="btn-fast" title="Run 10 steps per tick">Fast</button>
-      <button data-action="reset" title="Return to the example scene">Reset</button>
-      <button data-action="trees" id="btn-trees" class="on" title="Show or hide trees">Trees</button>
+    <div class="group" aria-label="Robots">
+      <span class="group-label">Robots</span>
+      <button data-action="monitor" id="btn-monitor" title="Open the robot center's monitor (M)">Monitor</button>
+      <button data-action="auto" id="btn-auto" class="on" title="Let the robot controller deploy, buy and park robots">Auto: on</button>
+      <label class="budget" title="Robot budget: the total price of the fleet can't go over it">Budget $<input id="budget" type="number" min="0" max="999" step="10" value="150">k</label>
     </div>
+    <details class="more">
+      <summary>More actions</summary>
+      <div class="menu">
+        <div class="group" aria-label="People">
+          <span class="group-label">People</span>
+          <button data-action="addPerson" title="Place a new walking person on a random path">Add person</button>
+          <button data-action="removePerson" data-needs="person" title="Remove the selected person and their dog">Remove person</button>
+          <button data-action="addDog" data-needs="person" title="Give the selected person a dog">Add dog</button>
+          <button data-action="changeActivity" data-needs="person" title="Cycle walking, standing, sitting">Change activity</button>
+          <button data-action="goBoating" data-needs="person" title="Send the selected person to the boat landing">Go boating</button>
+          <button data-action="dropLitter" data-needs="person" title="Drop litter near the selected person">Drop litter</button>
+        </div>
+        <div class="group" aria-label="Park">
+          <span class="group-label">Park</span>
+          <button data-action="breakFence" data-needs="fence" title="Break the selected fence segment">Break fence</button>
+          <button data-action="mowLawn" data-needs="lawn" title="Send the nearest idle mower to the selected lawn">Mow lawn</button>
+          <button data-action="reseedLawn" data-needs="lawn" title="Send the nearest idle mower to reseed the selected lawn">Reseed lawn</button>
+          <button data-action="toggleLawn" data-needs="lawn" title="Open or close the selected lawn">Open/close lawn</button>
+        </div>
+        <div class="group" aria-label="Add robots">
+          <span class="group-label">Robots</span>
+          <button data-action="addMower" title="Add an idle mower robot on a random path"><i class="sw mower"></i>Add mower</button>
+          <button data-action="addSteward" title="Add an idle steward robot on a random path"><i class="sw steward"></i>Add steward</button>
+          <button data-action="addSkimmer" title="Add an idle skimmer robot on the lake"><i class="sw skimmer"></i>Add skimmer</button>
+        </div>
+        <div class="group" aria-label="View">
+          <span class="group-label">View</span>
+          <button data-action="trees" id="btn-trees" class="on" title="Show or hide trees">Trees</button>
+        </div>
+        <p class="muted">Actions for a selected person, lawn or fence also show in its panel.</p>
+      </div>
+    </details>
   </header>
 
   <section id="status" aria-live="polite">
@@ -81,6 +97,7 @@
       <span id="insp-kind">Nothing selected</span>
       <button id="insp-close" aria-label="Clear selection" hidden>×</button>
     </div>
+    <div id="insp-actions" class="insp-actions" hidden></div>
     <div id="insp-body"><p class="muted">Click a person, dog, boat, robot, lawn, fence segment, litter item or the robot center to see its attributes.</p></div>
     <details id="log-wrap">
       <summary>Event log</summary>
@@ -119,6 +136,76 @@
         <table id="mon-table"><thead><tr><th>Robot</th><th>Doing</th><th>Battery</th></tr></thead><tbody></tbody></table>
         <p class="muted mon-note">Lines on the map and in the park show where each robot has been over the last 4 hours. Click a robot to follow it.</p>
       </div>
+    </div>
+  </section>
+
+  <section id="about" class="sheet" hidden aria-label="About this simulation">
+    <div class="panel-head">
+      <span>About this simulation</span>
+      <button id="about-close" aria-label="Close">×</button>
+    </div>
+    <div class="sheet-body">
+      <p class="thesis"><b>Thesis.</b> In a park where nobody holds the whole map, the layout is the information. Visitors and maintenance robots only know what they have seen, so where the signposts stand, which lawns are open and how the money is split decide both whether visitors find what they came for and whether the robots can keep the park presentable. Those two goals pull against each other: a dollar of signage is a dollar not spent on robots, and a lawn closed to rest its grass is a lawn a visitor can't reach. So a good park can't be laid out by intuition. It has to be searched for, by running agents with limited knowledge through each arrangement and comparing how they do.</p>
+      <h3>What you're looking at</h3>
+      <p>The Lake and the Ramble in Central Park, rebuilt from NYC Open Data. Visitors come in at the entrances knowing only the spot where they arrived and look for 2 to 4 places before their time runs out. Mowers, stewards and skimmers keep the lawns, the woods and the lake presentable from a charging center at Cherry Hill. Select anyone to see their cone of vision, then press <b>K</b> to see the map they have built.</p>
+      <h3>How to design an environment</h3>
+      <ol>
+        <li>Open <b>Design environments</b>. Two variations of the park run side by side on the same visitors and weather.</li>
+        <li>Keep the one you like; two new variations are made from it. Or switch to <b>Evolve automatically</b> and give it a number of epochs.</li>
+        <li><b>Open in park</b> loads any environment here, so you can watch its agents.</li>
+      </ol>
+      <h3>How it meets the brief</h3>
+      <dl class="brief">
+        <dt>Semantic model</dt><dd>SPEC.md; the example scene is its baseline.</dd>
+        <dt>Location</dt><dd>Position in feet on the real map; the region an occupant is in (lawn, path, woods, lake or boat); a cell on the 5 ft grid; and, in each agent's own map, places saved relative to a landmark ("120 ft north of Cherry Hill").</dd>
+        <dt>Distance</dt><dd>Straight-line feet (vision range, signposts, the 25 ft for asking directions); walking distance along A* routes (feet walked); travel time in minutes, slowed by terrain (the visit budget); and distance from the shore for flooding.</dd>
+        <dt>Agents</dt><dd>Visitors and robots (mowers, stewards, skimmers). Each sees through a cone, builds a map, saves landmarks, plans on what it knows, and has a goal with a score: places seen on time for visitors, the daily goal for robots.</dd>
+        <dt>Environment</dt><dd>Physical, partially observable, multi-agent, dynamic (grass, weeds, duckweed and rain) and non-deterministic (random personalities and chances, seeded so comparisons are fair).</dd>
+        <dt>Obstacles</dt><dd>Buildings, plantings, the Ramble's fence, closed or flooded lawns, and other agents.</dd>
+        <dt>Hindrances and affordances</dt><dd>Walkers move at full speed on paths, 80% on lawns, 60% in the Ramble and 50% on wet ground. Signposts and broken fences are affordances; flooded ground is a hindrance.</dd>
+        <dt>Primary function</dt><dd>The environment designer: side-by-side choices and automated epochs.</dd>
+        <dt>Real data</dt><dd>NYC Open Data: land cover, the lake, trails, paths and elevation points, so each lawn and path has a real height. Time runs minute by minute, 6:00 to 22:00.</dd>
+      </dl>
+    </div>
+  </section>
+
+  <section id="designer" class="sheet wide" hidden aria-label="Environment designer">
+    <div class="panel-head">
+      <span>Environment designer</span>
+      <button id="designer-close" aria-label="Close the designer">×</button>
+    </div>
+    <div class="sheet-body">
+      <p class="muted des-intro">You are the designer. An environment is which of the 32 signposts stand (green dots), which lawns are closed (red), and the total budget: signposts cost $2k each and the rest buys robots. Each environment is scored by running it: half for visitors (places seen, on time), half for the park (time presentable), minus 0.04 points per $1k spent. Red shading on the maps is where agents walked.</p>
+      <div class="des-settings">
+        <label>Test run <select id="des-steps"><option value="120">2 hours</option><option value="240" selected>4 hours</option><option value="480">8 hours</option></select></label>
+        <label>Visitors <input id="des-visitors" type="number" min="5" max="80" value="30"></label>
+        <label>Weather <select id="des-rain"><option value="dry">dry</option><option value="shower">a shower at 7:30</option><option value="storm">a storm at 8:00</option></select></label>
+      </div>
+      <div class="des-tabs" role="tablist">
+        <button data-tab="manual" class="on" role="tab">Choose side by side</button>
+        <button data-tab="auto" role="tab">Evolve automatically</button>
+      </div>
+      <div id="des-manual">
+        <p id="des-man-note" class="muted"></p>
+        <div class="des-pair"><div class="des-card" id="card-a"></div><div class="des-card" id="card-b"></div></div>
+        <div class="des-row"><button id="des-next" title="Two new variations of the current environment">Neither: try two more</button>
+          <span class="muted">or start over from</span> <select id="des-from"><option value="example">the example park</option><option value="random">a random park</option></select> <button id="des-restart">Start over</button></div>
+      </div>
+      <div id="des-auto" hidden>
+        <div class="des-row"><label>Epochs <input id="des-epochs" type="number" min="1" max="50" value="8"></label> <button id="des-evolve" class="primary">Evolve</button> <span id="des-progress" class="muted">Each epoch makes two variations of the current environment, runs them on the same visitors and weather, and keeps whichever of the three scores best.</span></div>
+        <div class="des-pair">
+          <div class="des-card" id="card-best"><p class="muted">The best environment so far shows here.</p></div>
+          <div class="des-chartbox"><canvas id="des-chart" width="420" height="170" aria-label="Score by epoch"></canvas>
+            <p class="muted small">Line: the kept environment's score. Yellow: the parent. Grey: its two variations.</p>
+            <ul id="des-epochs-list"></ul></div>
+        </div>
+      </div>
+      <h3>How we got here</h3>
+      <ol id="des-lineage"></ol>
+      <details><summary>Every environment run (<span id="des-tried-n">0</span>)</summary>
+        <table id="des-tried"><thead><tr><th>#</th><th>Environment</th><th>Change</th><th>Score</th><th>Visitors</th><th>Park</th><th>Spent</th></tr></thead><tbody></tbody></table>
+      </details>
+      <button id="des-download">Download results (JSON)</button>
     </div>
   </section>
 

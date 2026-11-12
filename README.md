@@ -1,6 +1,10 @@
 # Central Park Section
 
-A single-page three.js simulation of the semantic model in [SPEC.md](SPEC.md) (Lucy & Jay), set on a real section of Central Park: the Lake and the Ramble, built from NYC Open Data. People and dogs wander, row boats, break fences, drop litter and feed the ducks. Grass, weeds and duckweed grow. Rain floods low ground and can make the lake overflow. A robot controller sends out mowers, stewards and skimmers from a charging center to keep all three areas presentable for most of the day.
+A single-page three.js simulation of the semantic model in [SPEC.md](SPEC.md) (Lucy & Jay), set on a real section of Central Park: the Lake and the Ramble, built from NYC Open Data. People and dogs wander, row boats, break fences, drop litter and feed the ducks. Grass, weeds and duckweed grow. Rain floods low ground and can make the lake overflow. A robot controller sends out mowers, stewards and skimmers from a charging center to keep all three areas presentable for most of the day. An **environment designer** generates variations of the park's layout, runs them side by side or evolves them over epochs, and scores how the agents do in each.
+
+## Thesis
+
+In a park where nobody holds the whole map, the layout is the information. Visitors and maintenance robots only know what they have seen, so where the signposts stand, which lawns are open and how the money is split decide both whether visitors find what they came for and whether the robots can keep the park presentable. Those two goals pull against each other: a dollar of signage is a dollar not spent on robots, and a lawn closed to rest its grass is a lawn a visitor can't reach. So a good park can't be laid out by intuition. It has to be searched for, by running agents with limited knowledge through each arrangement and comparing how they do.
 
 ## Run it
 
@@ -14,9 +18,30 @@ Static files only: vanilla JavaScript, with three.js loaded from a CDN through a
 - Drag to orbit, right-drag to pan, scroll to zoom. Select something and press **F** to fly to it.
 - Click a person, dog, boat, robot, lawn, fence segment, litter item or the robot center to see its attributes. Paths, the Ramble, the Lake, the gate and the boat landing can be clicked too.
 - The bottom-left panel shows rain, the lake level, the clock, the **daily goal** and what the **robot controller** is doing.
+- **Design environments** opens the environment designer (below). **About** shows the thesis and how the site meets the brief.
 - **Auto** turns the controller on or off. **Budget** caps the total price of the fleet.
-- **Fast** runs 10 minutes per tick. **Trees** hides the canopy so you can see the ground.
-- **Space** plays or pauses; **Esc** clears the selection; **K** shows what the selected agent knows.
+- **Step** advances one minute; **Fast** runs 10 minutes per tick.
+- **More actions** holds the rest of the spec's toolbar: adding and removing people, dogs, boating, litter, fences, mowing, reseeding, closing lawns, adding robots, and hiding trees. The ones for a selected person, lawn or fence also show in its panel.
+- **Space** plays or pauses; **Esc** closes a panel or clears the selection; **K** shows what the selected agent knows; **M** opens the robot monitor.
+
+## The environment designer
+
+The designer is the simulation's primary function. An **environment** is what a park designer could change:
+
+- which of the 32 **signposts** stand (affordances: a visitor who reads one learns where the places it points to are);
+- which **lawns are closed** for restoration (obstacles to walkers, but no wear);
+- the **total budget**: signposts cost $2k each and the rest buys robots.
+
+Every environment runs in a web worker for 2, 4 or 8 hours of park time, with the same visitors (same entrances, goals and personalities) and the same weather, so a difference in score comes from the layout. The score is 50 × the visitors' performance (60% places seen, 40% on time) + 50 × the park's (average share of time the lawns, woods and lake were presentable) − 0.04 per $1k spent. Each card shows the score, its parts, and a map of the layout with where agents walked.
+
+- **Choose side by side:** two variations (one to three changes each) of the current environment run next to each other. Keep one and two new variations are made from it. *Neither* tries two more; *Start over* goes back to the example park or a random one.
+- **Evolve automatically:** give it a number of epochs. Each epoch makes two variations, runs them, and keeps whichever of the three scores best. A chart shows the score by epoch.
+- **Open in park** loads any environment into the 3D view so you can watch it. **Reset** returns to the example scene.
+- **Download results** saves every environment run, the choices that led to the current one and the epoch scores as JSON.
+
+## Hindrances and affordances
+
+People walk at full speed on paths, 80% on lawns, 60% in the Ramble's undergrowth and 50% on ground with more than 1″ of standing water. Ground with more than 3″ of water and closed lawns can't be entered. Slower ground costs visitors time against their visit budget. Signposts, broken fences (for people) and the maintenance gate (for stewards) are affordances.
 
 ## The real park
 
@@ -109,6 +134,9 @@ Following the *Spatial AI → Spatial Agents* workshop, two kinds of agent, **vi
 | `data/sights.json` | Sights visitors can look for, placed from their latitude and longitude. `sight` is how far off each can be seen, in feet. |
 | `js/monitor.js` | Draws the robot center's monitor map (used on the building's screen and in the monitor panel). |
 | `js/main.js` | Toolbar, click selection, attribute panel, goal and controller panel, robot monitor. |
+| `js/designer.js` | Environments: the example one, variations, random ones, running one and scoring it. No page code, so it also runs in workers. |
+| `js/designer-worker.js` | A web worker that runs environments off the page's thread. |
+| `js/designer-ui.js` | The designer panel: side-by-side rounds, epochs, the score chart, maps and the results download. |
 | `js/geometry.js` | Polygon helpers. |
 
 ## Modeling choices
