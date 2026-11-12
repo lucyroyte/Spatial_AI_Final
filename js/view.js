@@ -6,6 +6,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import * as G from './geometry.js';
 import { RULES } from './model.js';
+import { drawRobotMap, ROBOT_COLORS } from './monitor.js';
+import { KnowledgeLayer } from './knowledge.js';
 
 const w = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
 
@@ -122,6 +124,7 @@ export class View {
     this.entityScale = 1;
     this.buildStatic();
     this.buildDynamicLayers();
+    this.knowledge = new KnowledgeLayer(this.scene, model);
 
     window.addEventListener('resize', () => this.resize());
   }
@@ -224,6 +227,7 @@ export class View {
       this.waterLayers[r.id] = mesh;
     }
 
+    this.buildingPos = this.findBuildingSpot();
     this.buildTrees();
     this.buildFences();
 
@@ -244,23 +248,120 @@ export class View {
     pad.userData.ref = { kind: 'center', id: 'center' };
     const ring = new THREE.Mesh(new THREE.RingGeometry(13, 15, 32), new THREE.MeshBasicMaterial({ color: '#facc15', side: THREE.DoubleSide }));
     ring.rotation.x = -Math.PI / 2; ring.position.copy(w(c.position.x, c.position.y, 1.25));
-    const shed = new THREE.Mesh(new THREE.BoxGeometry(10, 8, 8), lam('#475569'));
-    shed.position.copy(w(c.position.x - 22, c.position.y, 4.5));
     const fdock = new THREE.Mesh(new THREE.BoxGeometry(18, 0.8, 18), lam('#64748b'));
     fdock.position.copy(w(c.dock.x, c.dock.y, 0.2));
     fdock.userData.ref = { kind: 'center', id: 'center' };
-    S.add(pad, ring, shed, fdock); this.pickables.push(pad, fdock);
+    S.add(pad, ring, fdock); this.pickables.push(pad, fdock);
+    this.buildCenterBuilding();
 
     // Labels for named places only.
     for (const r of [...L.lawns, L.woods, L.lake]) if (isNamed(r.name)) this.label(r.name, w(r.anchor.x, r.anchor.y, 3));
     this.label('Maintenance gate', w(L.gate.position.x, L.gate.position.y, 8), 'map-label small');
     this.label('Boat landing', w(lp.pathPoint.x, lp.pathPoint.y - 12, 3), 'map-label small');
-    this.label('Robot center', w(c.position.x, c.position.y + 24, 3), 'map-label small');
+    this.label('Robot center', w(this.buildingPos.x, this.buildingPos.y, 26), 'map-label small');
     this.label('Skimmer dock', w(c.dock.x, c.dock.y - 16, 3), 'map-label small');
   }
 
+  // The building stands next to the charging pad, on ground nobody walks on if possible.
+  findBuildingSpot() {
+    const L = this.model.layout, c = L.center.position;
+    let best = null;
+    for (let k = 0; k < 16 && !best; k++) {
+      const a = Math.PI + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 8);
+      const p = { x: c.x + Math.cos(a) * 36, y: c.y + Math.sin(a) * 36 };
+      const r = L.regionAt(p);
+      if (!r || (r.kind !== 'path' && r.kind !== 'lake')) best = p;
+    }
+    return best || { x: c.x - 36, y: c.y };
+  }
+
+  buildCenterBuilding() {
+    const b = this.buildingPos, c = this.model.layout.center.position;
+    const lam = (color) => new THREE.MeshLambertMaterial({ color });
+    const g = new THREE.Group();
+    g.position.copy(w(b.x, b.y, 0.5));
+    // Face the screen toward the charging pad.
+    g.rotation.y = Math.atan2(c.x - b.x, -(c.y - b.y));
+    const walls = new THREE.Mesh(new THREE.BoxGeometry(26, 12, 16), lam('#e2e8f0'));
+    walls.position.y = 6;
+    const base = new THREE.Mesh(new THREE.BoxGeometry(28, 1, 18), lam('#64748b'));
+    base.position.y = 0.5;
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(28, 1.2, 18), lam('#334155'));
+    roof.position.y = 12.6;
+    g.add(walls, base, roof);
+    // Solar panels on the roof.
+    const panelMat = new THREE.MeshLambertMaterial({ color: '#1e3a8a' });
+    for (const x of [-7.5, 0, 7.5]) {
+      const pnl = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.3, 10), panelMat);
+      pnl.position.set(x, 14, -1); pnl.rotation.x = -0.35;
+      g.add(pnl);
+    }
+    // Antenna with a light.
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 9, 6), lam('#94a3b8'));
+    mast.position.set(10, 17.5, -5);
+    this.beacon = new THREE.Mesh(new THREE.SphereGeometry(0.8, 10, 8), new THREE.MeshBasicMaterial({ color: '#ef4444' }));
+    this.beacon.position.set(10, 22.4, -5);
+    g.add(mast, this.beacon);
+    // Garage doors either side of the screen.
+    for (const x of [-9.5, 9.5]) {
+      const door = new THREE.Mesh(new THREE.BoxGeometry(5.5, 7, 0.3), lam('#94a3b8'));
+      door.position.set(x, 4, 8.1);
+      g.add(door);
+    }
+    // The monitor: a live map of every robot, drawn onto a canvas.
+    this.screenCanvas = document.createElement('canvas');
+    this.screenCanvas.width = 512; this.screenCanvas.height = 300;
+    this.screenTex = new THREE.CanvasTexture(this.screenCanvas);
+    this.screenTex.colorSpace = THREE.SRGBColorSpace;
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(11.6, 7.2, 0.4), lam('#0f172a'));
+    frame.position.set(0, 6.6, 8.1);
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(10.8, 6.33), new THREE.MeshBasicMaterial({ map: this.screenTex, toneMapped: false }));
+    screen.position.set(0, 6.6, 8.32);
+    g.add(frame, screen);
+    // Clicking anywhere on the building opens the monitor.
+    g.traverse((o) => { if (o.isMesh) { o.userData.ref = { kind: 'center', id: 'center', monitor: true }; this.pickables.push(o); } });
+    this.scene.add(g);
+    this.screenTimer = 1;
+    this.updateScreen(1);
+  }
+
+  updateScreen(dt) {
+    if (!this.screenCanvas) return;
+    if (this.beacon) this.beacon.visible = Math.floor(performance.now() / 600) % 2 === 0;
+    this.screenTimer += dt;
+    if (this.screenTimer < 0.5) return;
+    this.screenTimer = 0;
+    const ctx = this.screenCanvas.getContext('2d');
+    drawRobotMap(ctx, this.model, 512, 300, { pad: 6, labels: false, header: `ROBOTS ${this.model.robots().length} · ${this.model.clock()}` });
+    this.screenTex.needsUpdate = true;
+  }
+
+  // Where each robot has been, drawn over the map while the monitor is open.
+  updateTrails(lakeY) {
+    const g = this.trailLines.geometry;
+    let k = 0;
+    if (this.showTrails) {
+      const pa = g.attributes.position.array, ca = g.attributes.color.array, col = new THREE.Color(), max = pa.length;
+      for (const r of this.model.robots()) {
+        const tr = r.trail, h = r.kind === 'skimmer' ? lakeY + 0.4 : 1.6;
+        col.set(ROBOT_COLORS[r.kind]);
+        for (let i = 1; i < tr.length && k + 6 <= max; i++) {
+          pa.set([tr[i - 1].x, h, -tr[i - 1].y, tr[i].x, h, -tr[i].y], k);
+          const f = 0.25 + 0.75 * (i / tr.length);
+          ca.set([col.r * f, col.g * f, col.b * f, col.r * f, col.g * f, col.b * f], k);
+          k += 6;
+        }
+      }
+      g.attributes.position.needsUpdate = true;
+      g.attributes.color.needsUpdate = true;
+    }
+    g.setDrawRange(0, k / 3);
+  }
+
   buildTrees() {
-    const trees = this.model.layout.trees;
+    // Leave room for the robot center building.
+    const bp = this.buildingPos;
+    const trees = this.model.layout.trees.filter(([x, y, r]) => Math.hypot(x - bp.x, y - bp.y) > 18 + r * 0.6);
     const rand = G.mulberry32(42);
     const trunkGeo = new THREE.CylinderGeometry(0.5, 0.8, 1, 5);
     const crownGeo = new THREE.IcosahedronGeometry(1, 0);
@@ -374,9 +475,9 @@ export class View {
 
     // Leashes, wakes and robot target lines are rebuilt each frame.
     const lineLayer = (color, opts = {}) => {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3 * 2 * 4000), 3));
-      if (opts.vertexColors) g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(3 * 2 * 4000), 3));
+      const g = new THREE.BufferGeometry(), n = opts.segments || 4000;
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3 * 2 * n), 3));
+      if (opts.vertexColors) g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(3 * 2 * n), 3));
       const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity: opts.opacity ?? 1, vertexColors: !!opts.vertexColors, depthTest: opts.depthTest ?? true }));
       l.frustumCulled = false;
       l.renderOrder = 3;
@@ -386,6 +487,8 @@ export class View {
     this.leashes = lineLayer('#1f2937', { opacity: 0.85 });
     this.wakes = lineLayer('#ffffff', { opacity: 0.85 });
     this.targets = lineLayer('#ffffff', { vertexColors: true, opacity: 0.9, depthTest: false });
+    this.trailLines = lineLayer('#ffffff', { vertexColors: true, opacity: 0.85, depthTest: false, segments: 20000 });
+    this.showTrails = false;
 
     // Selection marker.
     this.selRing = new THREE.Mesh(new THREE.RingGeometry(2.4, 3.1, 32), new THREE.MeshBasicMaterial({ color: COLORS.select, side: THREE.DoubleSide, depthTest: false, transparent: true }));
@@ -652,6 +755,9 @@ export class View {
     for (const [id, o] of this.meshes) if (!alive.has(id)) { this.scene.remove(o); this.meshes.delete(id); }
 
     this.updateLines(lakeY);
+    this.updateTrails(lakeY);
+    this.updateScreen(dt);
+    this.knowledge.update(dt, selection, this.entityScale);
     this.updateSelection(selection, lakeY);
   }
 

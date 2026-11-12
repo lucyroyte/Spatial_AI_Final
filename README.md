@@ -16,7 +16,7 @@ Static files only: vanilla JavaScript, with three.js loaded from a CDN through a
 - The bottom-left panel shows rain, the lake level, the clock, the **daily goal** and what the **robot controller** is doing.
 - **Auto** turns the controller on or off. **Budget** caps the total price of the fleet.
 - **Fast** runs 10 minutes per tick. **Trees** hides the canopy so you can see the ground.
-- **Space** plays or pauses; **Esc** clears the selection.
+- **Space** plays or pauses; **Esc** clears the selection; **K** shows what the selected agent knows.
 
 ## The real park
 
@@ -54,6 +54,7 @@ The simulation runs on a 5 ft grid. Each cell belongs to one region, and people 
   - skimmers for duckweed over 15% and floating litter.
   
   It adds one more for any area that is behind on today's goal. Then it deploys parked robots, buys new ones if the budget allows, and parks the ones it doesn't need.
+- The center is a small building with a **monitor** on its wall that shows a live map of the fleet. Click the building, press **M** or use **Robot monitor** to open it full size. It shows where every robot is, what it is doing, the trail of where it has been over the last 4 hours, how far it has driven and its battery. Click a robot on the map or in the list to follow it. While the monitor is open, the trails are also drawn in the park.
 - A fence fixer goes to the broken fence and waits there until the Ramble is empty, since a fence can only be repaired with nobody inside.
 
 ## People and dogs
@@ -77,6 +78,21 @@ Each area must be presentable for at least 60% of the day:
 
 The panel shows how much of the day each area has been presentable so far, and why it is or isn't right now. At 22:00 the day is scored and a new one starts.
 
+## Agents: what they know and how they find their way
+
+Following the *Spatial AI → Spatial Agents* workshop, two kinds of agent, **visitors** and **robots**, only act on what they have seen for themselves.
+
+- **Limited knowledge at spawn.** A visitor comes in at one of 18 entrances found on the edge of the map. They know only the ground within 40 ft and a landmark for where they came in. Robots start knowing nothing.
+- **A cone of vision.** Every step each agent casts rays through its cone (people 120° and 90 ft; stewards 140° and 150 ft; mowers 100° and 100 ft; skimmers 360° and 70 ft). Plantings and buildings stop a ray, and the Ramble's undergrowth stops it after a short way. Tall sights (Bow Bridge, Belvedere Castle, Bethesda Terrace and others in `data/sights.json`) can be seen from further off.
+- **A map of their own.** Each agent keeps a 10 ft grid of what it has seen: open, blocked, water or unknown. Routes are planned on that map. Unknown ground is assumed walkable until they see otherwise, so agents re-plan when they find a closed lawn or a flooded path.
+- **Goals and performance.** Each visitor wants to see 2 to 4 places (named lawns, sights, the Lake, the Ramble) within a 90 to 180 minute visit. They explore toward unknown ground, head straight for a goal once they know where it is, and turn back with enough time to walk out. When they leave, the log records how many places they saw, the time taken against their budget, and the distance walked. The Visitors panel sums these up. Robots are judged by the daily goal.
+- **Landmarks.** Agents save landmarks with the useful information about them. Places are saved with where they are relative to something already known (for example "120 ft north of Cherry Hill"). Hindrances are flooded or closed ground. Issues are litter and broken fences, which robots report to the robot center's job board. Affordances are signposts and gaps in the fence. Signposts at busy junctions and entrances point to places within about 900 ft.
+- **Using landmarks.** The walk back uses only ground the visitor has seen, through the landmarks they saved. Visitors who meet sometimes ask each other for directions and copy a landmark. Robots merge their maps with the fleet's map whenever they charge.
+- **Other agents are obstacles.** An agent that finds someone on its next step sidesteps or waits, then squeezes past after a few tries. A mower that has waited too long on an occupied lawn asks the people there to move.
+- **Blind robots.** The controller only knows what robots and some visitors have reported. Stewards with no job patrol the ground the fleet has seen least recently, and the fence fixer walks the fence line.
+
+**Seeing it.** Select a person or robot to see its cone of vision. Press **K** or **Show what they know** to see its map (dark is unknown), its landmarks as pins, the route it planned, and an × where it last saw each other agent. The **Show** menu in the Agents group has park-wide overlays: where everyone walked, where landmarks were left, how much of each spot the visitors in the park know, and the robot fleet's shared map. **Add 25 visitors** brings in 25 more. Trees are hidden while an overlay is on.
+
 ## Code
 
 | File | What it holds |
@@ -87,7 +103,12 @@ The panel shows how much of the day each area has been presentable so far, and w
 | `js/nav.js` | A* search on the grid. |
 | `js/model.js` | Entities, their attributes and all rules, plus batteries, the controller, personalities and the daily goal. `RULES` at the top holds every rate and threshold. `advance()` is one time step; the action methods at the bottom back the toolbar. |
 | `js/view.js` | three.js rendering. People, dogs and robots get bigger as the camera pulls back, so they stay visible over the whole map. |
-| `js/main.js` | Toolbar, click selection, attribute panel, goal and controller panel. |
+| `js/mind.js` | One agent's knowledge: its 10 ft map, landmarks, the others it has seen, and the vision cones. |
+| `js/agents.js` | Agent behaviors mixed into the model: vision, visitors' goals, exploring and landmarks, giving way, robots reporting and patrolling, visitor stats. |
+| `js/knowledge.js` | Draws an agent's map, cone, landmarks and route, the park-wide overlays, and signposts. |
+| `data/sights.json` | Sights visitors can look for, placed from their latitude and longitude. `sight` is how far off each can be seen, in feet. |
+| `js/monitor.js` | Draws the robot center's monitor map (used on the building's screen and in the monitor panel). |
+| `js/main.js` | Toolbar, click selection, attribute panel, goal and controller panel, robot monitor. |
 | `js/geometry.js` | Polygon helpers. |
 
 ## Modeling choices

@@ -3,6 +3,7 @@
 // from this; the toolbar calls the action methods near the bottom.
 import * as G from './geometry.js';
 import { Nav } from './nav.js';
+import { AgentBehaviors } from './agents.js';
 
 // Tunable constants for every rule. One time step is one minute.
 export const RULES = {
@@ -33,6 +34,7 @@ export const RULES = {
   BATTERY: { move: 0.22, work: 0.22, idle: 0.03, charge: 3, reserve: 8 },
   PRICE: { mower: 18000, steward: 12000, skimmer: 15000 },
   BUDGET: 150000,
+  TRAIL_MINUTES: 240,
   CONTROLLER_EVERY: 5,
   // The daily goal.
   GOAL_SHARE: 0.6,
@@ -66,6 +68,7 @@ export class Model {
     const L = this.layout;
     this.rand = G.mulberry32(20261105);
     this.time = 0;
+    this.setupAgents();
     this.ids = {};
     this.log = [];
     this.alerts = [];
@@ -130,7 +133,14 @@ export class Model {
     this.giveDog(this.makePerson(this.randomPointIn(sm), 'standing'));
     walkOn(this.woods); walkOn(this.woods);
     const rowers = [this.makePerson(this.lake.anchor, 'walking'), this.makePerson(this.lake.anchor, 'walking')];
-    rowers.forEach((r) => { r.personality.duckFeeder = false; });
+    rowers.forEach((r) => {
+      // They rented the boat at the boathouse, so that is where they came in.
+      r.personality.duckFeeder = false;
+      r.plan.start = { ...this.landing.pathPoint };
+      Object.assign(r.mind.byKey.get('start'), { ...this.landing.pathPoint, label: 'the Boathouse landing' });
+      r.mind.glance(this, this.landing.pathPoint, 40, 'person', 0);
+      r.mind.remember({ key: 'place:landing', type: 'place', label: 'the Boathouse landing', ...this.landing.pathPoint, t: 0, rel: 'where we rented the boat' });
+    });
     const b = this.makeBoat(this.lake.anchor, 0.6, rowers);
     b.trip = 20;
 
@@ -143,6 +153,7 @@ export class Model {
     this.buyRobot('skimmer', this.randomLakePoint(40), true);
 
     this.day = { number: 1, steps: 0, ok: { lawns: 0, woods: 0, lake: 0 }, now: this.presentable() };
+    this.visitorTarget = this.people.length;
     this.history = [];
     this.note('Example scene loaded: the Lake and the Ramble, Central Park.');
   }
@@ -170,7 +181,7 @@ export class Model {
     return { ...this.lake.anchor };
   }
 
-  makePerson(pos, activity) {
+  makePerson(pos, activity, start = null) {
     const r = () => this.rand();
     const p = {
       kind: 'person', id: this.newId('P'), x: pos.x, y: pos.y, activity, dogId: null, route: [], goal: null, wait: 0, boatId: null,
@@ -180,10 +191,12 @@ export class Model {
         duckFeeder: r() < 0.25,
         picksUpPoop: r() < 0.7,
         letsDogInWoods: r() < 0.3,
+        reporter: r() < 0.3,                        // reports litter they see to the park
       },
     };
     p.location = this.regionIdAt(p) || this.layout.paths[0].id;
     p.prev = { x: p.x, y: p.y };
+    this.initVisitor(p, start);
     this.people.push(p);
     return p;
   }
@@ -253,7 +266,8 @@ export class Model {
       if (r.kind === 'woods') return !(agent.dogId && !agent.personality.letsDogInWoods && agent.location !== 'woods') || agent.goal?.type === 'evacuate';
       if (r.standingWater > RULES.PERSON_MAX_WATER) return false;
       if (r.kind === 'lawn') {
-        if (this.mowers.some((m) => m.targetLawn === r.id && m.state === 'mowing')) return false;
+        // Keep off a lawn that is being mowed, or that a mower is waiting to mow.
+        if (this.mowers.some((m) => m.targetLawn === r.id && (m.state === 'mowing' || (m.state === 'traveling' && m.waited > 0)))) return false;
         return r.status === 'open' && this.peopleIn(r.id).length < this.lawnCapacity(r);
       }
       return true;
@@ -268,7 +282,7 @@ export class Model {
     const L = this.layout, label = L.label, W = L.woods.index;
     const start = agent.location;
     const cache = new Map();
-    const passable = (c) => {
+    const truth = (c) => {
       const li = label[c];
       if (!li) return false;
       const r = this.regionByIndex[li];
@@ -278,11 +292,15 @@ export class Model {
       if (v === undefined) { v = this.allowed(agent, r.id); cache.set(r.id, v); }
       return v;
     };
+    // An agent planning with its own map: cells it has seen are judged as they
+    // are; unseen cells are assumed walkable (or not, when it only trusts what it knows).
+    const mind = extra.mind;
+    const passable = mind ? (c) => (mind.knowsCell(c) ? truth(c) : !extra.knownOnly) : truth;
     const step = (a, b) => {
       const wa = label[a] === W, wb = label[b] === W;
       if (wa === wb) return true;
       const f = L.fenceAt[wa ? a : b];
-      if (agent.kind === 'person') return f >= 0 && this.fences[f].status === 'broken';
+      if (agent.kind === 'person') return f >= 0 && this.fences[f].status === 'broken' && (!mind || mind.knowsCell(wa ? a : b));
       if (agent.kind === 'steward') return f === -2;
       return false;
     };
@@ -370,6 +388,8 @@ export class Model {
         if (!this.canStep(probe, s)) return 'blocked';
         from = s;
       }
+      const aside = this.giveWay(agent, q);
+      if (aside) { agent.x = aside.x; agent.y = aside.y; agent.location = this.regionIdAt(agent) || agent.location; return 'yield'; }
       agent.x = q.x; agent.y = q.y;
       if (q.x === t.x && q.y === t.y) agent.route.shift();
       agent.location = this.regionIdAt(agent) || agent.location;
@@ -388,7 +408,8 @@ export class Model {
     for (const m of this.mowers) this.stepMower(m);
     for (const s of this.stewards) this.stepSteward(s);
     for (const k of this.skimmers) this.stepSkimmer(k);
-    for (const r of this.robots()) this.stepBattery(r);
+    for (const r of this.robots()) { this.stepBattery(r); this.recordTrail(r); }
+    this.stepSenses();
     this.stepGrowth();
     this.stepChances();
     this.stepLitter();
@@ -444,19 +465,27 @@ export class Model {
       return;
     }
     if (p.stranded) { p.stranded = !!(here && here.standingWater > RULES.PERSON_MAX_WATER); if (p.stranded) return; }
+    this.checkVisitor(p);
     if (p.activity !== 'walking') {
-      if (this.rand() < RULES.AMBIENT_ACTIVITY) { p.activity = 'walking'; p.route = []; }
+      if (p.sitFor > 0) { if (--p.sitFor === 0) { p.activity = 'walking'; p.route = []; } }
+      else if (this.rand() < RULES.AMBIENT_ACTIVITY) { p.activity = 'walking'; p.route = []; }
       this.maybeFeedDucks(p);
       return;
     }
     if (!p.route.length) {
       if (p.goal && p.goal.type === 'boat') return this.tryBoard(p);
       if (p.goal && p.goal.type === 'activity') { p.activity = p.goal.activity; p.goal = null; return; }
-      if (here && here.kind === 'lawn' && this.rand() < 0.05) { p.activity = this.rand() < 0.5 ? 'sitting' : 'standing'; return; }
+      if (here && here.kind === 'lawn' && p.plan.status === 'exploring' && this.rand() < 0.02) { p.activity = this.rand() < 0.5 ? 'sitting' : 'standing'; return; }
       if (p.wait > 0) { p.wait--; this.maybeFeedDucks(p); return; }
-      this.pickWander(p);
+      this.decideVisitor(p);
+      if (!this.people.includes(p)) return;
     }
-    if (this.moveAlong(p, RULES.SPEED.person) === 'blocked') {
+    const before = { x: p.x, y: p.y };
+    const res = this.moveAlong(p, RULES.SPEED.person);
+    p.plan.distance += G.dist(before, p);
+    if (res === 'blocked') {
+      // Bumped into something unseen: remember it and plan again.
+      if (p.route[0]) { const c = this.layout.cellAt(p.route[0]); if (c >= 0) p.mind.mark(p.mind.kOfCell(c), this.cellKind(c, 'person'), this.time); }
       p.route = [];
       if (p.goal && p.goal.type === 'boat') {
         const rt = this.route(p, this.landing.pathPoint);
@@ -608,11 +637,44 @@ export class Model {
     const r = { kind, id: this.newId(kind === 'mower' ? 'M' : kind === 'steward' ? 'S' : 'K'), x: pos.x, y: pos.y, state: 'idle', route: [], target: null, note: '', battery: 100, role: kind === 'steward' ? 'general' : null, recalled: false };
     r.location = this.regionIdAt(r);
     r.price = RULES.PRICE[kind];
+    r.trail = [{ x: r.x, y: r.y, t: this.time }]; r.distance = 0; r.boughtAt = this.time;
+    this.initRobotMind(r);
     if (kind === 'mower') { r.targetLawn = null; r.task = null; this.mowers.push(r); }
     if (kind === 'steward') { r.work = 0; this.stewards.push(r); }
     if (kind === 'skimmer') this.skimmers.push(r);
     if (!initial) this.note(`Robot ${r.id} (${kind}) bought for $${(r.price / 1000).toFixed(0)}k.`);
     return r;
+  }
+  // Where each robot has been: a point whenever it has moved 5 ft, for the last 4 hours.
+  recordTrail(r) {
+    const last = r.trail[r.trail.length - 1];
+    const d = G.dist(last, r);
+    if (d >= 5) { r.trail.push({ x: r.x, y: r.y, t: this.time }); r.distance += d; }
+    while (r.trail.length > 1 && this.time - r.trail[0].t > RULES.TRAIL_MINUTES) r.trail.shift();
+  }
+  // A short sentence for the robot center monitor.
+  taskText(r) {
+    if (r.state === 'docked') return 'Parked at the center';
+    if (r.state === 'charging') return 'Charging';
+    if (r.state === 'returning') return r.recalled ? 'Heading back to park' : 'Heading back to recharge';
+    if (r.kind === 'mower') {
+      if (!r.targetLawn) return 'Waiting for a lawn to need work';
+      const l = this.byId[r.targetLawn].name;
+      if (r.state === 'traveling') return `${r.note ? 'At' : 'Driving to'} ${l} to ${r.task}${r.note ? ` (${r.note.replace(/^waiting: /, 'waiting, ')})` : ''}`;
+      return `${r.state === 'mowing' ? 'Mowing' : 'Reseeding'} ${l}${r.note ? ` (${r.note})` : ''}`;
+    }
+    if (r.kind === 'steward') {
+      const t = r.target;
+      if (r.state === 'patrolling') return 'Patrolling to look for litter and broken fences';
+      if (!t) return 'Looking for work';
+      const what = t.type === 'fence' ? `fence ${t.id}` : t.type === 'woods' ? 'the Ramble' : (() => { const l = this.litter.find((x) => x.id === t.id); return l ? `${l.type === 'hole' ? 'hole' : l.type === 'poop' ? 'dog poop' : 'litter'} ${t.id}` : t.id; })();
+      const verb = { traveling: 'Going to', repairing: t.type === 'fence' ? 'Repairing' : 'Filling', weeding: 'Weeding', collecting: 'Picking up' }[r.state] || r.state;
+      return `${verb} ${what}${r.note ? ` (${r.note})` : ''}`;
+    }
+    if (!r.target) return 'Looking for duckweed';
+    if (r.target.type === 'litter') return `Going to floating litter ${r.target.id}`;
+    const v = Math.round(this.duckweed[r.target.id]);
+    return `${r.state === 'eating' ? 'Eating' : 'Going to'} duckweed (${v}% cover)${r.note ? ` (${r.note})` : ''}`;
   }
   fleetCost() { return this.robots().reduce((s, r) => s + r.price, 0); }
   home(r) { return r.kind === 'skimmer' ? this.center.dock : this.center.position; }
@@ -698,7 +760,7 @@ export class Model {
       const taken = new Set(this.mowers.filter((x) => x !== m && x.targetLawn).map((x) => x.targetLawn));
       const free = this.lawns.filter((l) => !taken.has(l.id));
       const reseed = free.filter((l) => this.lawnNeeds(l) === 'reseed').sort((a, b) => G.dist(a.anchor, m) - G.dist(b.anchor, m));
-      const mow = free.filter((l) => this.lawnNeeds(l) === 'mow').sort((a, b) => b.grassHeight - a.grassHeight);
+      const mow = free.filter((l) => this.lawnNeeds(l) === 'mow').sort((a, b) => b.grassHeight * b.area - a.grassHeight * a.area); // biggest overgrown lawns first
       if (reseed.length) this.sendMower(m, reseed[0], 'reseed');
       else if (mow.length) this.sendMower(m, mow[0], 'mow');
       return;
@@ -712,7 +774,16 @@ export class Model {
       }
       const occupied = this.peopleIn(lawn.id).length + this.dogsIn(lawn.id).length > 0;
       const wet = m.task === 'mow' ? lawn.standingWater > 0.05 : lawn.standingWater > RULES.ROBOT_MAX_WATER;
-      if (occupied || wet) { m.note = occupied ? 'waiting: people or dogs on the lawn' : 'waiting: standing water on the lawn'; m.waited = (m.waited || 0) + 1; return; }
+      if (occupied || wet) {
+        m.note = occupied ? 'waiting: people or dogs on the lawn' : 'waiting: standing water on the lawn';
+        m.waited = (m.waited || 0) + 1;
+        // After a while the mower asks the people on the lawn to move along.
+        if (occupied && m.waited === 15) {
+          for (const p of this.peopleIn(lawn.id)) { p.sitFor = 0; p.activity = 'walking'; p.route = []; p.goal = null; }
+          this.note(`${m.id} asked the people on ${lawn.name} to make way for mowing.`);
+        }
+        return;
+      }
       m.note = ''; m.waited = 0;
       m.route = this.sweepPattern(lawn, m);
       m.state = m.task === 'mow' ? 'mowing' : 'reseeding';
@@ -772,6 +843,7 @@ export class Model {
     if (s.state === 'docked' || s.state === 'charging') return;
     if (s.state === 'returning') return this.stepReturning(s);
     if (s.state === 'idle') return this.chooseStewardTask(s);
+    if (s.state === 'patrolling') return this.stepPatrol(s);
     const t = s.target;
     if (t.type === 'litter' && !this.litter.find((l) => l.id === t.id)) { s.state = 'idle'; s.target = null; s.route = []; return; }
     if (t.type === 'fence' && this.fences.find((f) => f.id === t.id).status === 'intact') { s.state = 'idle'; s.target = null; return; }
@@ -789,6 +861,7 @@ export class Model {
     if (s.state === 'repairing' && t.type === 'litter') {
       if (++s.work >= RULES.FILL_STEPS) {
         this.litter = this.litter.filter((l) => l.id !== t.id);
+        this.fleet.board.delete(`litter:${t.id}`);
         this.note(`${s.id} filled hole ${t.id}.`);
         s.state = 'idle'; s.target = null;
       }
@@ -799,6 +872,7 @@ export class Model {
       s.note = '';
       if (++s.work >= RULES.REPAIR_STEPS) {
         this.fences.find((f) => f.id === t.id).status = 'intact';
+        this.fleet.board.delete(`fence:${t.id}`);
         this.note(`${s.id} repaired fence ${t.id}.`);
         s.state = 'idle'; s.target = null;
       }
@@ -807,6 +881,7 @@ export class Model {
     if (s.state === 'collecting') {
       const l = this.litter.find((x) => x.id === t.id);
       this.litter = this.litter.filter((x) => x.id !== t.id);
+      this.fleet.board.delete(`litter:${t.id}`);
       this.note(`${s.id} collected ${l && l.type === 'poop' ? 'dog poop' : 'litter'} ${t.id}.`);
       s.state = 'idle'; s.target = null;
       return;
@@ -837,7 +912,7 @@ export class Model {
     const taken = new Set(this.stewards.filter((x) => x !== s && x.target && x.target.type === 'fence').map((x) => x.target.id));
     const goals = new Map();
     this.fences.forEach((f, k) => {
-      if (f.status !== 'broken' || taken.has(f.id)) return;
+      if (f.status !== 'broken' || taken.has(f.id) || !this.fleet.board.has(`fence:${f.id}`)) return;
       let spots = this.fenceSpots(k, false);
       if (!spots.length) spots = this.fenceSpots(k, true);
       for (const c of spots) goals.set(c, f);
@@ -851,7 +926,7 @@ export class Model {
     const taken = new Set([...this.stewards, ...this.skimmers].filter((x) => x !== s && x.target && x.target.type === 'litter').map((x) => x.target.id));
     const goals = new Map();
     for (const l of this.litter) {
-      if (taken.has(l.id) || (types && !types.includes(l.type))) continue;
+      if (taken.has(l.id) || (types && !types.includes(l.type)) || !this.fleet.board.has(`litter:${l.id}`)) continue;
       if (l.location !== 'lake') { goals.set(L.cellAt(l), l); continue; }
       if (!includeShore || this.shoreDist(l) > RULES.STEWARD_LAKE_REACH + L.cell / 2) continue;
       const c = L.cellAtNearest(l, (r) => r.kind === 'path' || r.kind === 'lawn' || r.kind === 'woods');
@@ -880,17 +955,19 @@ export class Model {
       if (rt) { s.target = { type: 'woods', id: 'woods' }; s.route = rt; s.state = 'traveling'; this.note(`${s.id} going to weed the Ramble (through the gate).`); return true; }
       return false;
     };
-    if (role === 'fence') return void tryFence();
-    if (role === 'litter') return void tryLitter();
-    if (role === 'weeds') return void tryWeeds();
-    if (!tryFence() && !tryLitter()) tryWeeds();
+    let found;
+    if (role === 'fence') found = tryFence();
+    else if (role === 'litter') found = tryLitter();
+    else if (role === 'weeds') found = tryWeeds();
+    else found = tryFence() || tryLitter() || tryWeeds();
+    if (!found && role !== 'weeds') this.startPatrol(s);
   }
 
   stepSkimmer(k) {
     if (k.state === 'docked' || k.state === 'charging') return;
     if (k.state === 'returning') return this.stepReturning(k);
     for (const l of [...this.litter]) {
-      if (l.location === 'lake' && G.dist(l, k) < 8) { this.litter = this.litter.filter((x) => x !== l); this.note(`${k.id} picked up floating litter ${l.id}.`); }
+      if (l.location === 'lake' && G.dist(l, k) < 8) { this.litter = this.litter.filter((x) => x !== l); this.fleet.board.delete(`litter:${l.id}`); this.note(`${k.id} picked up floating litter ${l.id}.`); }
     }
     const nearBoat = (p) => this.boats.some((b) => G.dist(p, b) < RULES.SKIMMER_BOAT_GAP);
     if (nearBoat(k)) {
@@ -908,7 +985,7 @@ export class Model {
     const cells = this.layout.grid.cells;
     if (k.state === 'idle') {
       // Floating litter first if it is close, then the densest duckweed.
-      const lit = this.litter.filter((l) => l.location === 'lake' && !this.robots().some((r) => r !== k && r.target && r.target.id === l.id)).sort((a, b) => G.dist(a, k) - G.dist(b, k))[0];
+      const lit = this.litter.filter((l) => l.location === 'lake' && this.fleet.board.has(`litter:${l.id}`) && !this.robots().some((r) => r !== k && r.target && r.target.id === l.id)).sort((a, b) => G.dist(a, k) - G.dist(b, k))[0];
       if (lit) { k.target = { type: 'litter', id: lit.id }; k.route = this.lakeRoute(k, lit) || []; k.state = 'traveling'; return; }
       const others = new Set(this.skimmers.filter((x) => x !== k && x.target && x.target.type === 'cell').map((x) => x.target.id));
       let best = -1, bv = -1;
@@ -953,17 +1030,19 @@ export class Model {
   // Works out how many robots of each kind the park needs right now, deploys
   // parked ones, buys new ones while the budget allows, and parks the rest.
   demand() {
-    const broken = this.fences.filter((f) => f.status === 'broken').length;
-    const landMess = this.litter.filter((l) => l.location !== 'lake').length;
-    const floating = this.litter.filter((l) => l.location === 'lake').length;
+    // The controller only knows what the robots have seen and reported.
+    const reported = [...this.fleet.board.values()];
+    const broken = reported.filter((b) => b.type === 'fence').length;
+    const landMess = reported.filter((b) => b.type === 'litter' && b.where !== 'lake').length;
+    const floating = reported.filter((b) => b.type === 'litter' && b.where === 'lake').length;
     const lawnsNeeding = this.lawns.filter((l) => this.lawnNeeds(l)).length;
     const duck = this.duckweedCover(), weeds = this.woods.weedCover;
     const share = this.dayShares();
     const behind = (k) => this.day.steps > 30 && share[k] < RULES.GOAL_SHARE ? 1 : 0;
     const want = {
-      mower: Math.min(4, Math.ceil(lawnsNeeding / 3) + (lawnsNeeding ? behind('lawns') : 0)),
-      fence: broken ? Math.min(2, 1 + (broken > 4 ? 1 : 0)) : 0,
-      litter: Math.min(3, Math.ceil(landMess / 8) + (landMess ? behind('lawns') : 0)),
+      mower: Math.min(4, Math.ceil(lawnsNeeding / 2) + (lawnsNeeding ? behind('lawns') : 0)),
+      fence: broken ? Math.min(2, 1 + (broken > 4 ? 1 : 0)) : 1, // one fixer always walks the fence line
+      litter: Math.min(4, Math.max(2, 1 + Math.ceil(landMess / 6)) + (landMess ? behind('lawns') : 0)),
       weeds: weeds > RULES.WEED_TRIGGER ? Math.min(2, 1 + (weeds > 50 ? 1 : 0) + behind('woods')) : 0,
       skimmer: Math.min(4, (duck > 15 ? Math.ceil((duck - 15) / 6) : 0) + (floating > 2 ? 1 : 0) + (duck > 15 ? behind('lake') : 0)),
     };
@@ -1256,3 +1335,4 @@ export class Model {
   setBudget(v) { this.budget = Math.max(0, Math.round(v / 1000) * 1000); return { ok: true }; }
   toggleAuto() { this.autoRobots = !this.autoRobots; this.note(`Robot controller ${this.autoRobots ? 'on' : 'off'}.`); return { ok: true }; }
 }
+Object.assign(Model.prototype, AgentBehaviors);

@@ -64,7 +64,7 @@ button.on { background: var(--accent); color: #fff; border-color: transparent; }
   position: fixed; left: 10px; bottom: 10px; padding: 10px 12px; width: 300px; z-index: 4; max-height: calc(100vh - 110px); overflow: auto;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
 }
-#status > div:not(#goal):not(#controller):not(#history) { display: flex; justify-content: space-between; align-items: baseline; }
+#status > div:not(#goal):not(#controller):not(#history):not(#visitors):not(#overlay-key) { display: flex; justify-content: space-between; align-items: baseline; }
 #status .k { color: var(--muted); }
 #status .v { font-weight: 600; font-variant-numeric: tabular-nums; font-size: 15px; }
 #status .v.alert { color: #dc2626; }
@@ -135,6 +135,26 @@ label.budget input { width: 52px; font: inherit; color: var(--text); background:
   white-space: nowrap; pointer-events: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
+#monitor {
+  position: fixed; left: 50%; top: 96px; transform: translateX(-50%); width: min(900px, calc(100vw - 20px)); max-height: calc(100vh - 110px);
+  overflow: auto; padding: 10px 12px; z-index: 6; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+}
+.mon-body { display: flex; gap: 12px; align-items: flex-start; }
+#mon-map { width: 480px; max-width: 100%; height: auto; border-radius: 8px; background: #0b1220; cursor: pointer; flex: none; }
+.mon-side { flex: 1; min-width: 0; }
+#mon-summary { font-size: 12px; margin-bottom: 6px; }
+#mon-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#mon-table th { text-align: left; color: var(--muted); font-weight: 500; padding: 3px 4px; border-bottom: 1px solid var(--border); }
+#mon-table td { padding: 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
+#mon-table tr { cursor: pointer; }
+#mon-table tr:hover td, #mon-table tr.sel td { background: rgba(34, 211, 238, 0.12); }
+#mon-table .rid { white-space: nowrap; font-weight: 600; }
+#mon-table .rid i { display: inline-block; width: 9px; height: 9px; margin-right: 4px; border-radius: 2px; }
+#mon-table .rid small { display: block; color: var(--muted); font-weight: 400; }
+.batt { position: relative; width: 58px; height: 10px; border-radius: 3px; background: rgba(100, 116, 139, 0.25); overflow: hidden; }
+.batt i { position: absolute; left: 0; top: 0; bottom: 0; }
+.batt + span { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mon-note { font-size: 11px; margin: 8px 0 0; }
 #toasts { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; display: flex; flex-direction: column; gap: 6px; align-items: center; z-index: 6; pointer-events: none; }
 .toast { background: #111827; color: #f9fafb; padding: 7px 12px; border-radius: 8px; box-shadow: var(--shadow); font-size: 12px; max-width: min(92vw, 420px); text-align: center; transition: opacity 0.4s; }
 .toast.ok { background: #14532d; }
@@ -151,4 +171,16 @@ label.budget input { width: 52px; font: inherit; color: var(--text); background:
   #status .goal-row .why { display: none; }
   #legend { display: none; }
   #toasts { bottom: 110px; }
+  #monitor { top: 6px; max-height: calc(100vh - 12px); }
+  .mon-body { flex-direction: column; }
+  #mon-map { width: 100%; }
 }
+
+/* Agent knowledge */
+label.overlay { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+label.overlay select { font: inherit; color: var(--text); background: var(--btn); border: 1px solid var(--border); border-radius: 6px; padding: 4px 5px; max-width: 190px; }
+#visitors div { margin-top: 3px; }
+#overlay-key:empty { display: none; }
+#overlay-key i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 3px 0 6px; vertical-align: -1px; }
+.know-btn { display: block; margin-top: 10px; width: 100%; }
+.lm-label { font: 600 10px/1.2 system-ui, sans-serif; color: #111827; background: rgba(255,255,255,0.88); border-left: 3px solid #fff; padding: 1px 5px; border-radius: 3px; white-space: nowrap; transform: translateY(-50%); }

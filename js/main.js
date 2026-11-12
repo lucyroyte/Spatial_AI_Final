@@ -2,6 +2,8 @@
 import { Model, RULES } from './model.js';
 import { View } from './view.js';
 import { loadLayout } from './layout.js';
+import { drawRobotMap, ROBOT_COLORS, batteryColor } from './monitor.js';
+import { OVERLAYS, LANDMARK_COLORS } from './knowledge.js';
 
 const $ = (id) => document.getElementById(id);
 let layout;
@@ -50,6 +52,16 @@ function describe(e) {
       ['Breaks fences', ps.fenceHopper > 0.5 ? 'often' : ps.fenceHopper > 0.15 ? 'sometimes' : 'rarely'],
       ['Feeds the ducks', ps.duckFeeder ? 'yes' : 'no']);
     if (e.dogId) rows.push(['Picks up poop', ps.picksUpPoop ? 'yes' : 'no'], ['Lets dog in the woods', ps.letsDogInWoods ? 'yes' : 'no']);
+    rows.push(['Reports problems', ps.reporter ? 'yes, like calling 311' : 'no']);
+    if (e.plan) {
+      const pl = e.plan, used = model.time - pl.startT;
+      const goals = pl.goals.map((g) => `${pl.done.includes(g) ? '✓' : '○'} ${model.place(g)?.label || g}${!pl.done.includes(g) && e.mind.byKey.has(g) ? ' (knows where)' : ''}`).join(' · ');
+      const status = { exploring: 'exploring to find places', heading: `heading to ${e.mind.byKey.get(pl.target)?.label || 'a place'}`, returning: `going back to ${e.mind.byKey.get('start')?.label || 'the start'}` }[pl.status];
+      rows.push(['Goals', goals], ['Plan', status], ['Time', `${used} of ${pl.budget} min`], ['Walked', `${Math.round(pl.distance).toLocaleString()} ft`],
+        ['Knows', `${fmt((e.mind.known / model.kcells) * 100, 1)}% of the park · ${e.mind.landmarks.length} landmarks`],
+        ['Has seen', `${e.mind.others.size} other agents nearby`]);
+      if (pl.told) flags.push([`Got directions ${pl.told} time${pl.told > 1 ? 's' : ''}`]);
+    }
     if (e.goal?.type === 'boat') flags.push(e.waitingBoat ? ['Waiting: lake overflowing', true] : ['Heading to boat landing']);
     if (e.evacuating) flags.push(['Moving to dry or open ground']);
     if (e.stranded) flags.push(['Stranded by flooding', true]);
@@ -122,6 +134,7 @@ function describe(e) {
     const here = model.robots().filter((r) => r.state === 'docked' || r.state === 'charging');
     rows.push(['Position', pt(e.position)], ['Skimmer dock', pt(e.dock)], ['Robots here', here.length ? here.map((r) => `${r.id} (${r.state})`).join(', ') : 'none'],
       ['Fleet', `${model.robots().length} robots, $${model.fleetCost() / 1000}k of $${model.budget / 1000}k`], ['Charging', `${RULES.BATTERY.charge}% per minute`]);
+    flags.push(['Click the building or press M for the robot monitor']);
     return { title: e.name, rows, flags };
   }
   if (k === 'mower' || k === 'steward' || k === 'skimmer') {
@@ -131,6 +144,8 @@ function describe(e) {
     if (k === 'steward') rows.push(['Target', !e.target ? 'none' : e.target.type === 'woods' ? 'The Ramble (weeding)' : `${e.target.type === 'fence' ? 'Fence' : 'Litter'} ${e.target.id}`]);
     if (k === 'skimmer') rows.push(['Target', !e.target ? 'none' : e.target.type === 'litter' ? `Floating litter ${e.target.id}` : `Duckweed cell ${model.layout.grid.cells[e.target.id].id} (${fmt(model.duckweed[e.target.id], 0)}%)`]);
     if (k !== 'skimmer') rows.push(['Location', regionName(e.location)]);
+    rows.push(['Doing', model.taskText(e)], ['Driven', `${Math.round(e.distance).toLocaleString()} ft`]);
+    if (e.mind) rows.push(['Knows', `${fmt((e.mind.known / model.kcells) * 100, 1)}% of the park · ${e.mind.landmarks.length} landmarks`], ['Has seen', `${e.mind.others.size} other agents nearby`]);
     if (e.note) flags.push([e.note]);
     const names = { mower: 'Mower robot', steward: 'Steward robot', skimmer: 'Skimmer robot' };
     return { title: `${names[k]} ${e.id}`, rows, flags };
@@ -151,7 +166,8 @@ function renderInspector() {
   $('insp-kind').textContent = d.title;
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   $('insp-body').innerHTML = `<table>${d.rows.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join('')}</table>` +
-    d.flags.map(([t, bad]) => `<span class="flag${bad ? ' bad' : ''}">${esc(t)}</span>`).join('');
+    d.flags.map(([t, bad]) => `<span class="flag${bad ? ' bad' : ''}">${esc(t)}</span>`).join('') +
+    (e.mind ? `<button class="know-btn${view.knowledge.mode === 'agent' ? ' on' : ''}" data-know>${view.knowledge.mode === 'agent' ? 'Hide what they know' : 'Show what they know'}</button>` : '');
 }
 
 function renderLog() {
@@ -171,6 +187,7 @@ function renderStatus() {
   $('st-weed').textContent = `Weeds ${fmt(model.woods.weedCover, 0)}%`;
   $('btn-rain').textContent = `Rain: ${rain}`;
   renderGoal();
+  renderVisitors();
 }
 
 function renderGoal() {
@@ -195,6 +212,33 @@ function renderGoal() {
   $('history').textContent = model.history.length ? `Past days: ${model.history.slice(-5).map((h) => `day ${h.day} ${h.met ? 'met' : 'missed'}`).join(', ')}` : '';
   $('btn-auto').textContent = `Auto: ${model.autoRobots ? 'on' : 'off'}`;
   $('btn-auto').classList.toggle('on', model.autoRobots);
+}
+
+function renderVisitors() {
+  const v = model.visitorStats(), pc = (x) => `${Math.round(x * 100)}%`;
+  $('visitors').innerHTML = `<div>${v.inPark} in the park: ${v.exploring} exploring, ${v.heading} heading to a place, ${v.returning} going back</div>` +
+    `<div>They know ${pc(v.known)} of the park each, on average. Robots share a map of ${pc(v.fleetKnown)}; ${v.reported} problems reported.</div>` +
+    (v.left ? `<div>${v.left} have left: ${pc(v.places)} of their places seen, ${pc(v.allSeen)} saw them all, ${pc(v.onTime)} on time · ${Math.round(v.minutes)} min, ${Math.round(v.distance).toLocaleString()} ft walked</div>` : '<div class="muted">No one has finished a visit yet.</div>');
+}
+
+let treesBeforeOverlay = null;
+function setOverlay(mode) {
+  view.knowledge.setMode(mode);
+  // Maps read better from above without the tree canopy.
+  if (mode !== 'off' && treesBeforeOverlay === null) { treesBeforeOverlay = view.trees.visible; view.setTreesVisible(false); }
+  if (mode === 'off' && treesBeforeOverlay !== null) { view.setTreesVisible(treesBeforeOverlay); treesBeforeOverlay = null; }
+  $('btn-trees').classList.toggle('on', view.trees.visible);
+  $('overlay').value = mode;
+  $('overlay-key').innerHTML = {
+    agent: `Dark: unknown to them · <i style="background:#dc3c3c"></i>blocked · <i style="background:#3c82eb"></i>water · <i style="background:#ffe65a"></i>in view now. Pins are their landmarks: ${Object.entries(LANDMARK_COLORS).map(([k, c]) => `<i style="background:${c}"></i>${k}`).join(' ')}. An × marks another agent where they last saw it.`,
+    fleet: 'Dark: no robot has seen it yet. Robots merge maps when they charge.',
+    paths: 'Every step any visitor or robot has walked. Darker red: more steps.',
+    landmarks: 'Where agents saved landmarks: places, hindrances, issues and signposts. Darker: more agents.',
+    shared: 'How many of the visitors in the park know each spot. Darker blue: most of them.',
+    off: '',
+  }[mode] || '';
+  if (mode === 'agent' && !(selected() && selected().mind)) toast('Select a person or robot to see what it knows.');
+  renderInspector();
 }
 
 function updateButtons() {
@@ -227,6 +271,7 @@ function run(action) {
     case 'addMower': res = model.addRobotAction('mower'); break;
     case 'addSteward': res = model.addRobotAction('steward'); break;
     case 'addSkimmer': res = model.addRobotAction('skimmer'); break;
+    case 'addVisitors': res = model.addVisitors(25); break;
     case 'rain': res = model.cycleRain(); break;
     case 'advance': advance(); break;
     case 'play':
@@ -241,18 +286,63 @@ function run(action) {
       if (fast && !playing) run('play');
       break;
     case 'auto': res = model.toggleAuto(); break;
+    case 'monitor': setMonitor($('monitor').hidden); break;
     case 'trees': view.setTreesVisible(!view.trees.visible); $('btn-trees').classList.toggle('on', view.trees.visible); break;
     case 'reset': model.reset(); $('budget').value = model.budget / 1000; select(null); toast('Example scene restored.', true); break;
   }
   if (res && !res.ok) toast(res.msg);
   else if (res && res.msg) toast(res.msg, true);
   if (res && res.entity && ['addPerson', 'addMower', 'addSteward', 'addSkimmer'].includes(action)) select({ kind: res.entity.kind, id: res.entity.id });
+  if (action === 'reset') setOverlay(view.knowledge.mode);
   renderLog();
   renderInspector();
 }
 
 document.querySelectorAll('#toolbar [data-action]').forEach((b) => b.addEventListener('click', () => run(b.dataset.action)));
 $('insp-close').addEventListener('click', () => select(null));
+$('insp-body').addEventListener('click', (ev) => { if (ev.target.closest('[data-know]')) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent'); });
+$('overlay').innerHTML = Object.entries(OVERLAYS).map(([k, t]) => `<option value="${k}">${t}</option>`).join('');
+$('overlay').addEventListener('change', (ev) => setOverlay(ev.target.value));
+
+// ---------- robot center monitor ----------
+let monitorT = null;
+function setMonitor(open) {
+  $('monitor').hidden = !open;
+  view.showTrails = open;
+  $('btn-monitor').classList.toggle('on', open);
+  if (open) renderMonitor();
+}
+function renderMonitor() {
+  const sel = selected();
+  monitorT = drawRobotMap($('mon-map').getContext('2d'), model, 480, 450, { selectedId: sel && sel.id, pad: 10 });
+  const robots = model.robots();
+  const count = (k) => robots.filter((r) => r.kind === k).length;
+  const charging = robots.filter((r) => r.state === 'charging' || r.state === 'docked').length;
+  $('mon-summary').textContent = `${model.clock()} · ${count('mower')} mowers, ${count('steward')} stewards, ${count('skimmer')} skimmers · ${charging} at the center · fleet $${model.fleetCost() / 1000}k of $${model.budget / 1000}k`;
+  const roles = { general: 'steward', fence: 'fence fixer', litter: 'litter picker', weeds: 'weeder' };
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  $('mon-table').tBodies[0].innerHTML = robots.map((r) => `<tr data-id="${r.id}" class="${sel && sel.id === r.id ? 'sel' : ''}">
+    <td class="rid"><i style="background:${ROBOT_COLORS[r.kind]}"></i>${r.id}<small>${r.kind === 'steward' ? roles[r.role] : r.kind} · ${regionName(r.location)}</small></td>
+    <td>${esc(model.taskText(r))}<br><small class="muted">${Math.round(r.distance).toLocaleString()} ft driven</small></td>
+    <td><div class="batt"><i style="width:${r.battery}%;background:${batteryColor(r.battery)}"></i></div><span>${Math.round(r.battery)}%</span></td></tr>`).join('');
+}
+function followRobot(id) {
+  const r = model.get(id);
+  if (!r) return;
+  select({ kind: r.kind, id: r.id });
+  view.focus(r.x, r.y, 320);
+  renderMonitor();
+}
+$('monitor-close').addEventListener('click', () => setMonitor(false));
+$('mon-table').addEventListener('click', (ev) => { const tr = ev.target.closest('tr[data-id]'); if (tr) followRobot(tr.dataset.id); });
+$('mon-map').addEventListener('click', (ev) => {
+  if (!monitorT) return;
+  const c = ev.currentTarget, rect = c.getBoundingClientRect();
+  const x = ((ev.clientX - rect.left) / rect.width) * c.width, y = ((ev.clientY - rect.top) / rect.height) * c.height;
+  let best = null, bd = 14;
+  for (const r of model.robots()) { const d = Math.hypot(monitorT.X(r.x) - x, monitorT.Y(r.y) - y); if (d < bd) { bd = d; best = r; } }
+  if (best) followRobot(best.id);
+});
 $('budget').addEventListener('change', (ev) => {
   const v = Math.max(0, Number(ev.target.value) || 0) * 1000;
   model.setBudget(v);
@@ -266,13 +356,17 @@ const canvas = view.renderer.domElement;
 canvas.addEventListener('pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY }; });
 canvas.addEventListener('pointerup', (ev) => {
   if (!down || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
-  select(view.pick(ev.clientX, ev.clientY));
+  const ref = view.pick(ev.clientX, ev.clientY);
+  select(ref);
+  if (ref && ref.monitor) setMonitor(true);
 });
 window.addEventListener('keydown', (ev) => {
   if (ev.target.tagName === 'INPUT') return;
   if (ev.key === 'f' && selected()) { const e = selected(); const p = e.anchor || e.position || e; view.focus(p.x, p.y); }
   if (ev.key === ' ') { ev.preventDefault(); run('play'); }
-  if (ev.key === 'Escape') select(null);
+  if (ev.key === 'Escape') { if (!$('monitor').hidden) setMonitor(false); else select(null); }
+  if (ev.key === 'm') run('monitor');
+  if (ev.key === 'k' && selected()?.mind) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent');
 });
 
 // ---------- loop ----------
@@ -283,7 +377,7 @@ function frame(now) {
   view.update(dt, selection);
   view.render();
   panelTick += dt;
-  if (panelTick > 0.2) { panelTick = 0; renderStatus(); if (selection) renderInspector(); }
+  if (panelTick > 0.2) { panelTick = 0; renderStatus(); if (selection) renderInspector(); if (!$('monitor').hidden) renderMonitor(); }
   requestAnimationFrame(frame);
 }
 renderStatus(); renderLog(); updateButtons();
@@ -295,3 +389,4 @@ requestAnimationFrame(frame);
 window.__model = model;
 window.__view = view;
 window.__select = select;
+window.__overlay = setOverlay;
