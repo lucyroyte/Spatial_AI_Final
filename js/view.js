@@ -180,7 +180,9 @@ export class View {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.maxPolarAngle = Math.PI * 0.44;
-    this.controls.minDistance = 25;
+    this.controls.minDistance = 12;
+    // A drag or zoom by the user takes over from a camera flight.
+    this.controls.addEventListener('start', () => { this.fly = null; });
     this.controls.maxDistance = 5000;
     this.controls.screenSpacePanning = false;
     this.fitCamera();
@@ -225,6 +227,7 @@ export class View {
     this.camera.updateProjectionMatrix();
   }
   setScenePreset(preset) {
+    this.fly = this.follow = this.flyHome = null;
     this.night = preset === 'night';
     this.fitCamera();
     if (preset === 'relief') {
@@ -257,7 +260,57 @@ export class View {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.labels.setSize(window.innerWidth, window.innerHeight);
   }
+  // Fly down to an entity at about its own eye level and keep following it.
+  // The pose before the first flight is kept so flyBack() can return to it.
+  flyTo(id, dist = 34, pitch = 0.32) {
+    const o = this.meshes.get(id);
+    // A just-added entity gets its mesh on the next update; try again then.
+    this.pendingFly = o ? null : { id, dist, pitch };
+    if (!o) return false;
+    const cam = this.camera.position, tgt = this.controls.target;
+    if (!this.flyHome) this.flyHome = { pos: cam.clone(), tgt: tgt.clone() };
+    const to = o.position.clone();
+    to.y += 3;
+    // Keep the current compass direction so the flight feels like a zoom.
+    const dir = cam.clone().sub(tgt).setY(0);
+    if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
+    dir.normalize().multiplyScalar(dist * Math.cos(pitch));
+    const pos = to.clone().add(dir);
+    pos.y = to.y + dist * Math.sin(pitch);
+    this.fly = { from: { pos: cam.clone(), tgt: tgt.clone() }, to: { pos, tgt: to }, t0: performance.now(), dur: 1100 };
+    this.follow = { id, last: o.position.clone() };
+    return true;
+  }
+  flyBack() {
+    this.follow = this.pendingFly = null;
+    if (!this.flyHome) return;
+    const cam = this.camera.position, tgt = this.controls.target;
+    this.fly = { from: { pos: cam.clone(), tgt: tgt.clone() }, to: this.flyHome, t0: performance.now(), dur: 900 };
+    this.flyHome = null;
+  }
+  // Called each frame before the controls update.
+  stepCamera() {
+    const cam = this.camera.position, tgt = this.controls.target;
+    if (this.pendingFly && this.meshes.has(this.pendingFly.id)) this.flyTo(this.pendingFly.id, this.pendingFly.dist, this.pendingFly.pitch);
+    if (this.follow) {
+      const o = this.meshes.get(this.follow.id);
+      if (!o) this.follow = null;
+      else {
+        const d = o.position.clone().sub(this.follow.last);
+        this.follow.last.copy(o.position);
+        if (this.fly) { this.fly.to.pos.add(d); this.fly.to.tgt.add(d); } else { cam.add(d); tgt.add(d); }
+      }
+    }
+    if (!this.fly) return;
+    const f = this.fly, t = Math.min(1, (performance.now() - f.t0) / f.dur);
+    const e = t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+    cam.lerpVectors(f.from.pos, f.to.pos, e);
+    tgt.lerpVectors(f.from.tgt, f.to.tgt, e);
+    if (t >= 1) this.fly = null;
+  }
+
   focus(x, y, dist = 420) {
+    this.fly = this.follow = this.flyHome = null;
     const t = w(x, y, 0);
     const off = this.camera.position.clone().sub(this.controls.target).setLength(dist);
     this.controls.target.copy(t);
@@ -1384,12 +1437,13 @@ export class View {
   }
 
   render() {
+    this.stepCamera();
     this.controls.update();
     // Keep the camera above the model: the target stays at or above the lake
     // surface and the eye stays clear of the ground under it.
     const cam = this.camera.position, tgt = this.controls.target;
     if (tgt.y < 0) tgt.y = 0;
-    const floor = Math.max(0, ground(cam.x, -cam.z)) + 15;
+    const floor = Math.max(0, ground(cam.x, -cam.z)) + (this.follow ? 6 : 15);
     if (cam.y < floor) { cam.y = floor; this.camera.lookAt(tgt); }
     this.renderer.render(this.scene, this.camera);
     this.labels.render(this.scene, this.camera);

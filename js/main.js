@@ -35,8 +35,16 @@ function toast(msg, ok = false) {
 
 function selected() { return selection ? model.get(selection.id) : null; }
 
+// Clicking someone or something that moves flies the camera down to it and
+// follows it; clearing the selection flies back to where you were.
+const FLY_DIST = { person: 30, dog: 24, boat: 44, mower: 38, steward: 34, skimmer: 40 };
 function select(ref) {
   selection = ref && model.get(ref.id) ? ref : null;
+  if (selection && FLY_DIST[selection.kind]) {
+    view.flyTo(selection.id, FLY_DIST[selection.kind]);
+    if (!select.hinted) { select.hinted = true; toast('Following them. Drag to look around; Esc or × flies back out.', true); }
+  }
+  else view.flyBack();
   renderInspector();
   updateButtons();
 }
