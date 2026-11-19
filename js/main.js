@@ -35,16 +35,19 @@ function toast(msg, ok = false) {
 
 function selected() { return selection ? model.get(selection.id) : null; }
 
-// Clicking someone or something that moves flies the camera down to it and
-// follows it; clearing the selection flies back to where you were.
+// Click selects. Double-click (or the panel's Zoom in, or Z) on someone or
+// something that moves flies the camera down to it and follows it; clearing
+// the selection flies back to where you were.
 const FLY_DIST = { person: 30, dog: 24, boat: 44, mower: 38, steward: 34, skimmer: 40 };
+function zoomIn() {
+  if (!selection || !FLY_DIST[selection.kind]) return;
+  view.flyTo(selection.id, FLY_DIST[selection.kind]);
+  renderInspector();
+}
 function select(ref) {
   selection = ref && model.get(ref.id) ? ref : null;
-  if (selection && FLY_DIST[selection.kind]) {
-    view.flyTo(selection.id, FLY_DIST[selection.kind]);
-    if (!select.hinted) { select.hinted = true; toast('Following them. Drag to look around; Esc or × flies back out.', true); }
-  }
-  else view.flyBack();
+  if (!selection) view.flyBack();
+  else if (view.follow && view.follow.id !== selection.id) view.follow = null;
   renderInspector();
   updateButtons();
 }
@@ -195,6 +198,9 @@ function renderInspector() {
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   $('insp-body').innerHTML = `<table>${d.rows.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join('')}</table>` +
     d.flags.map(([t, bad]) => `<span class="flag${bad ? ' bad' : ''}">${esc(t)}</span>`).join('') +
+    (FLY_DIST[e.kind] ? (view.follow?.id === e.id
+      ? '<button class="know-btn" data-zoom="out">Zoom back out (Esc)</button>'
+      : '<button class="know-btn" data-zoom="in">Zoom in and follow (double-click)</button>') : '') +
     (e.mind ? `<button class="know-btn${view.knowledge.mode === 'agent' ? ' on' : ''}" data-know>${view.knowledge.mode === 'agent' ? 'Hide what they know' : 'Show what they know'}</button>` : '');
 }
 
@@ -339,6 +345,9 @@ document.querySelectorAll('#toolbar [data-action], #timebar [data-action]').forE
 $('insp-close').addEventListener('click', () => select(null));
 $('insp-body').addEventListener('click', (ev) => {
   if (ev.target.closest('[data-know]')) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent');
+  const z = ev.target.closest('[data-zoom]');
+  if (z && z.dataset.zoom === 'in') zoomIn();
+  else if (z) { view.flyBack(); renderInspector(); }
 });
 $('insp-actions').addEventListener('click', (ev) => { const b = ev.target.closest('[data-act]'); if (b) run(b.dataset.act); });
 
@@ -424,6 +433,12 @@ canvas.addEventListener('pointerup', (ev) => {
   select(ref);
   if (ref && ref.monitor) setMonitor(true);
 });
+canvas.addEventListener('dblclick', (ev) => {
+  const ref = view.pick(ev.clientX, ev.clientY);
+  if (!ref || !FLY_DIST[ref.kind]) return;
+  select(ref);
+  zoomIn();
+});
 window.addEventListener('keydown', (ev) => {
   if (ev.target.matches('input, select, button, summary') && ev.key !== 'Escape') return;
   if (ev.key === 'f' && selected()) { const e = selected(); const p = e.anchor || e.position || e; view.focus(p.x, p.y); }
@@ -435,6 +450,7 @@ window.addEventListener('keydown', (ev) => {
     else select(null);
   }
   if (ev.key === 'm') run('monitor');
+  if (ev.key === 'z') zoomIn();
   if (ev.key === 'k' && selected()?.mind) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent');
 });
 

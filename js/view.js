@@ -1234,9 +1234,15 @@ export class View {
       }
     }, dt));
     add(this.syncEntities(m.dogs, () => this.makeDog(), (dg, o, d) => {
+      // Drawn walking beside its owner, facing the same way; the model's
+      // own dog position (for poop, digging) is unchanged.
       const own = m.person(dg.ownerId);
-      const hd = own ? Math.atan2(own.y - dg.y, own.x - dg.x) : 0;
-      this.ease(o, w(dg.x, dg.y, topOf(dg.location)), d, hd);
+      if (!own) { this.ease(o, w(dg.x, dg.y, topOf(dg.location)), d, 0); return; }
+      const mv = own.prev ? Math.hypot(own.x - own.prev.x, own.y - own.prev.y) : 0;
+      if (mv > 0.1) o.userData.walkHd = Math.atan2(own.y - own.prev.y, own.x - own.prev.x);
+      const hd = o.userData.walkHd ?? 0, side = parseInt(dg.id.slice(1), 10) % 2 ? 1 : -1;
+      const x = own.x - Math.sin(hd) * 3.4 * side - Math.cos(hd) * 0.6, y = own.y + Math.cos(hd) * 3.4 * side - Math.sin(hd) * 0.6;
+      this.ease(o, w(x, y, topOf(own.location)), d, hd);
     }, dt));
     add(this.syncEntities(m.litter, (l) => {
       let o;

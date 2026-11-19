@@ -309,3 +309,8 @@ details.more[open] summary { background: var(--btn-hover); }
   #toasts { bottom: 200px; }
   .tb-right { width: 100%; }
 }
+
+.hint { position: fixed; left: 16px; top: 96px; z-index: 4; margin: 0; max-width: 250px; padding: 6px 10px; font-size: 11px; line-height: 1.45; color: var(--muted);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+.hint b { color: var(--text); font-weight: 650; }
+@media (max-width: 760px) { .hint { display: none; } }
