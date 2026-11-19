@@ -314,3 +314,7 @@ details.more[open] summary { background: var(--btn-hover); }
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
 .hint b { color: var(--text); font-weight: 650; }
 @media (max-width: 760px) { .hint { display: none; } }
+.cmp-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 6px 0; }
+.cmp-table th, .cmp-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.cmp-table td:first-child { color: var(--muted); white-space: nowrap; }
+.cmp-notes { font-size: 12px; line-height: 1.5; padding-left: 18px; margin: 6px 0 12px; }

@@ -77,7 +77,9 @@ export function randomEnv(space, test, rand) {
 }
 
 export function score(model) {
-  const v = model.visitorStats(), d = model.dayShares();
+  // A run of exactly one park day ends as the day rolls over; score that day.
+  const done = model.day.steps === 0 && model.history.length ? model.history[model.history.length - 1] : null;
+  const v = model.visitorStats(), d = done || model.dayShares();
   const visitors = v.left ? 0.6 * v.places + 0.4 * v.onTime : 0;
   const park = (d.lawns + d.woods + d.lake) / 3;
   const spent = (model.fleetCost() + model.signCost()) / 1000;

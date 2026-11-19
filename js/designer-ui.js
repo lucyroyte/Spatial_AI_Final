@@ -7,6 +7,7 @@
 // Every environment runs in a web worker, so the park keeps animating.
 import { baseEnv, designSpace, mutate, randomEnv, seeded, DESIGN } from './designer.js';
 import { drawParkBase } from './monitor.js';
+import { RULES } from './model.js';
 
 const $ = (id) => document.getElementById(id);
 const W = 320, H = 300;
@@ -58,9 +59,9 @@ export function setupDesigner({ model, openInPark, toast }) {
   const SEED = 1;
   const testKey = () => JSON.stringify(test());
   const withTest = (env) => { const t = test(); return { ...env, visitors: t.visitors, rain: t.rain, seed: SEED }; };
-  async function evaluate(item) {
-    const r = await run(withTest(item.env), test().steps);
-    item.score = r.score; item.heat = r.heat; item.test = testKey(); item.seed = SEED;
+  async function evaluate(item, steps = test().steps) {
+    const r = await run(withTest(item.env), steps);
+    item.score = r.score; item.heat = r.heat; item.test = steps === test().steps ? testKey() : null; item.seed = SEED;
     tried.push({ n: tried.length + 1, ...item, env: withTest(item.env) });
     if (tried.length > 80) delete tried[tried.length - 81].heat;
     renderTried();
@@ -211,26 +212,82 @@ export function setupDesigner({ model, openInPark, toast }) {
     $('des-epochs-list').innerHTML = epochs.slice().reverse().map((e) => `<li><b>Epoch ${e.k}</b>: ${e.best.toFixed(1)} · ${e.kept === 'parent' ? 'no variation beat the parent' : e.change}</li>`).join('');
   }
 
+  // ---------- budgets: the same park, different money ----------
+  let cmp = [];
+  const robotsBought = (sc) => sc.robots.mower + sc.robots.steward + sc.robots.skimmer;
+  async function compareBudgets() {
+    if (busy) return;
+    const budgets = ['cmp-a', 'cmp-b', 'cmp-c'].map((id) => $(id).value.trim()).filter((v) => v !== '').map(Number)
+      .filter((v) => Number.isFinite(v) && v >= 0).map((v) => Math.min(600, Math.round(v / 10) * 10));
+    if (budgets.length < 2) { toast('Enter at least two budgets to compare.'); return; }
+    busy = true;
+    $('cmp-run').disabled = true;
+    const base = baseEnv(model), signs = base.signs.filter(Boolean).length * RULES.SIGN_PRICE / 1000;
+    cmp = budgets.map((b, i) => ({ env: { ...base, budget: b + signs }, robotBudget: b, label: `${'ABC'[i]} · $${b}k for robots`, change: `the example park with $${b}k for robots` }));
+    const t = test(), steps = Number($('cmp-steps').value);
+    $('cmp-progress').textContent = `Running ${cmp.length} parks for ${steps / 60} hours each (about a minute)…`;
+    $('cmp-summary').innerHTML = '';
+    $('cmp-cards').innerHTML = cmp.map((_, i) => `<div class="des-card" id="cmp-card-${i}"></div>`).join('');
+    cmp.forEach((it, i) => card($(`cmp-card-${i}`), it, { key: `cmp${i}` }));
+    try {
+      await Promise.all(cmp.map((it, i) => evaluate(it, steps).then(() => card($(`cmp-card-${i}`), it, { key: `cmp${i}` }))));
+      renderCompare();
+      $('cmp-progress').textContent = `Each ran ${steps === 960 ? 'a full park day (6:00–22:00)' : `${steps / 60} hours`} with ${t.visitors} visitors and ${t.rain === 'dry' ? 'dry weather' : `a ${t.rain}`}. Visitors and weather are set at the top.`;
+    } catch (err) { toast(err.message); $('cmp-progress').textContent = ''; }
+    $('cmp-run').disabled = false;
+    busy = false;
+  }
+  function renderCompare() {
+    const rows = [
+      ['Robot budget', (it) => `$${it.robotBudget}k`],
+      ['Robots bought', (it) => { const r = it.score.robots, n = (k, c) => `${c} ${k}${c === 1 ? '' : 's'}`; return `${robotsBought(it.score)} (${n('mower', r.mower)}, ${n('steward', r.steward)}, ${n('skimmer', r.skimmer)})`; }],
+      ['Spent on robots', (it) => `$${it.score.spent - it.score.signs * RULES.SIGN_PRICE / 1000}k of $${it.robotBudget}k`],
+      ['Lawns presentable', (it) => `${it.score.lawns}% of the time`],
+      ['Woods presentable', (it) => `${it.score.woods}% of the time`],
+      ['Lake presentable', (it) => `${it.score.lake}% of the time`],
+      ['Park score', (it) => it.score.park],
+      ['Visitor score', (it) => it.score.visitors],
+      ['Total score', (it) => it.score.total.toFixed(1)],
+    ];
+    const head = `<tr><th></th>${cmp.map((it) => `<th>${it.label.split(' · ')[0]} · $${it.robotBudget}k</th>`).join('')}</tr>`;
+    const body = rows.map(([k, f]) => `<tr><td>${k}</td>${cmp.map((it) => `<td>${f(it)}</td>`).join('')}</tr>`).join('');
+    // What the extra money bought, each budget against the cheapest.
+    const sorted = cmp.slice().sort((x, y) => x.robotBudget - y.robotBudget), lo = sorted[0];
+    const notes = sorted.slice(1).map((it) => {
+      const dSpent = it.score.spent - lo.score.spent - (it.score.signs - lo.score.signs) * RULES.SIGN_PRICE / 1000, dPark = it.score.park - lo.score.park, dVis = it.score.visitors - lo.score.visitors;
+      const per = dPark > 0 ? ` That is about $${(dSpent / dPark).toFixed(1)}k per extra park point.` : '';
+      const sign = (v) => (v > 0 ? `+${v}` : `${v}`);
+      return `<li><b>$${it.robotBudget}k vs $${lo.robotBudget}k:</b> spends $${dSpent}k more on ${robotsBought(it.score) - robotsBought(lo.score)} more robots. Park ${sign(dPark)} points (lawns ${sign(it.score.lawns - lo.score.lawns)}, woods ${sign(it.score.woods - lo.score.woods)}, lake ${sign(it.score.lake - lo.score.lake)}), visitors ${sign(dVis)}.${per}${dSpent > 0 && dPark <= 0 ? ' The extra robots did not make the park more presentable in this run.' : ''}</li>`;
+    });
+    const best = cmp.slice().sort((x, y) => y.score.total - x.score.total)[0];
+    $('cmp-summary').innerHTML = `<table class="cmp-table">${head}${body}</table><ul class="cmp-notes">${notes.join('')}<li>Best total score (which counts the money spent): <b>${best.label}</b>.</li></ul>`;
+  }
+
   // ---------- wiring ----------
-  function open(show = true) {
+  function showTab(tab) {
+    for (const o of document.querySelectorAll('#designer [data-tab]')) o.classList.toggle('on', o.dataset.tab === tab);
+    $('des-manual').hidden = tab !== 'manual';
+    $('des-auto').hidden = tab !== 'auto';
+    $('des-budget').hidden = tab !== 'budget';
+    if (tab === 'auto' && current.score) card($('card-best'), { ...current, label: `Current: ${current.label}` }, { key: 'best' });
+    if (tab === 'manual' && !round && !busy) newRound();
+  }
+  function open(show = true, tab) {
     $('designer').hidden = !show;
     $('btn-design').classList.toggle('on', show);
     $('btn-design').setAttribute('aria-expanded', String(show));
-    if (show && !round && !busy) newRound();
+    if (show) showTab(tab || document.querySelector('#designer [data-tab].on')?.dataset.tab || 'manual');
   }
   $('btn-design').addEventListener('click', () => open($('designer').hidden));
   $('designer-close').addEventListener('click', () => open(false));
-  for (const b of document.querySelectorAll('#designer [data-tab]')) b.addEventListener('click', () => {
-    for (const o of document.querySelectorAll('#designer [data-tab]')) o.classList.toggle('on', o === b);
-    $('des-manual').hidden = b.dataset.tab !== 'manual';
-    $('des-auto').hidden = b.dataset.tab !== 'auto';
-    if (b.dataset.tab === 'auto' && current.score) card($('card-best'), { ...current, label: `Current: ${current.label}` }, { key: 'best' });
-  });
+  for (const b of document.querySelectorAll('#designer [data-tab]')) b.addEventListener('click', () => showTab(b.dataset.tab));
+  $('cmp-run').addEventListener('click', compareBudgets);
   $('designer').addEventListener('click', (ev) => {
     const kb = ev.target.closest('[data-keep]'); if (kb) return keep(kb.dataset.keep);
     const ob = ev.target.closest('[data-open]');
     if (ob) {
-      const it = ob.dataset.open === 'best' ? current : pair && pair[ob.dataset.open];
+      const k = ob.dataset.open;
+      const it = k === 'best' ? current : k.startsWith('cmp') ? cmp[Number(k.slice(3))] : pair && pair[k];
       if (it) { openInPark(withTest(it.env), it.label); open(false); }
     }
   });
