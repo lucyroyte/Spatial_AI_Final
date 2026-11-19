@@ -302,7 +302,7 @@ export class View {
     const base = flatMesh(L.other.park.map(([outer]) => [outer]), lam('#a5a18d'), -16.2, 12);
     S.add(base);
     // Its sides rise to meet the terrain, so the cut edge shows the relief.
-    S.add(this.buildSkirt(L.other.park.map(([outer]) => outer), -16.2, lam('#a5a18d')));
+    S.add(this.buildSkirt(L.other.park.map(([outer]) => outer), -16.2, lam('#c4b596')));
     // The park ground has the lake cut out so the water shows through.
     const lakeHoles = L.lake.polygons.map((poly) => poly[0]);
     S.add(this.buildGroundSheet(L, lakeHoles));
@@ -526,8 +526,20 @@ export class View {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.computeVertexNormals();
+    // Like a layered site model: a thin dark line at every 5 ft of real
+    // elevation (the contour interval), so the cut edge reads as stacked boards.
     const m = mat.clone();
     m.side = THREE.DoubleSide;
+    m.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, CONTOUR);
+      sh.vertexShader = 'varying float vY;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vY = position.y;');
+      sh.fragmentShader = 'varying float vY;\nuniform float uK, uLake;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', `#include <dithering_fragment>
+        float c = vY / (5.0 * uK), f = abs(fract(c) - 0.5);
+        float edge = 1.0 - smoothstep(0.0, 1.5, (0.5 - f) / max(fwidth(c), 1e-4));
+        float band = mod(floor(c), 2.0);
+        gl_FragColor.rgb *= (vY > 0.0 ? 0.94 + 0.06 * band : 0.78) * (1.0 - edge * 0.35);`);
+    };
+    m.customProgramCacheKey = () => 'skirt';
     return new THREE.Mesh(geo, m);
   }
 
@@ -638,10 +650,11 @@ export class View {
     if (this.showTrails || this.night) {
       const pa = g.attributes.position.array, ca = g.attributes.color.array, col = new THREE.Color(), max = pa.length;
       for (const r of this.model.robots()) {
-        const tr = r.trail, h = r.kind === 'skimmer' ? lakeY + 0.4 : 1.6;
+        const tr = r.trail, water = r.kind === 'skimmer';
+        const hy = (q) => (water ? lakeY + 0.4 : 2 + ground(q.x, q.y));
         col.set(ROBOT_COLORS[r.kind]);
         for (let i = 1; i < tr.length && k + 6 <= max; i++) {
-          pa.set([tr[i - 1].x, h, -tr[i - 1].y, tr[i].x, h, -tr[i].y], k);
+          pa.set([tr[i - 1].x, hy(tr[i - 1]), -tr[i - 1].y, tr[i].x, hy(tr[i]), -tr[i].y], k);
           const f = 0.25 + 0.75 * (i / tr.length);
           ca.set([col.r * f, col.g * f, col.b * f, col.r * f, col.g * f, col.b * f], k);
           k += 6;
@@ -879,7 +892,14 @@ export class View {
     this.leashes = lineLayer('#1f2937', { opacity: 0.85 });
     this.wakes = lineLayer('#ffffff', { opacity: 0.85 });
     this.targets = lineLayer('#ffffff', { vertexColors: true, opacity: 0.9, depthTest: false });
-    this.trailLines = lineLayer('#ffffff', { vertexColors: true, opacity: 0.85, depthTest: false, segments: 20000 });
+    // Trails lie on the ground and hills hide them; a faint copy drawn
+    // without depth keeps the hidden parts readable as a ghost.
+    this.trailLines = lineLayer('#ffffff', { vertexColors: true, opacity: 0.9, segments: 20000 });
+    const ghost = new THREE.LineSegments(this.trailLines.geometry, this.trailLines.material.clone());
+    Object.assign(ghost.material, { depthTest: false, depthWrite: false, opacity: 0.18 });
+    ghost.frustumCulled = false;
+    ghost.renderOrder = 2;
+    this.trailLines.add(ghost);
     this.showTrails = false;
 
     // Selection marker.
@@ -1156,7 +1176,7 @@ export class View {
       let trail = this.visitorTrails.get(p);
       if (!trail) { trail = []; this.visitorTrails.set(p, trail); }
       if (trail.at(-1)?.time !== m.time) {
-        trail.push({ x, y, h: h + 0.6, time: m.time });
+        trail.push({ x, y, h: h + 0.6 + ground(x, y), time: m.time });
         if (trail.length > 45) trail.shift();
       }
     }, dt));
