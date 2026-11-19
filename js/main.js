@@ -329,6 +329,7 @@ function run(action) {
       break;
     case 'auto': res = model.toggleAuto(); break;
     case 'monitor': setMonitor($('monitor').hidden); break;
+    case 'compare': designer.open(true, 'budget'); break;
     case 'about': setAbout($('about').hidden); break;
     case 'trees': view.setTreesVisible(!view.trees.visible); $('btn-trees').classList.toggle('on', view.trees.visible); break;
     case 'reset': model.reset(); $('budget').value = model.budget / 1000; select(null); toast('Example scene restored.', true); break;

@@ -82,6 +82,7 @@
     <div class="group" aria-label="Robots">
       <span class="group-label">Robots</span>
       <button data-action="monitor" id="btn-monitor" title="Open the robot center's monitor (M)">Monitor</button>
+      <button data-action="compare" title="Run the park with two or three robot budgets and compare cost and results">Compare budgets</button>
       <button data-action="auto" id="btn-auto" class="on" title="Let the robot controller deploy, buy and park robots">Auto: on</button>
       <label class="budget" title="Robot budget: the total price of the fleet can't go over it">$<input id="budget" type="number" min="0" max="999" step="10" value="150">k</label>
     </div>
@@ -187,6 +188,7 @@
       <div class="des-tabs" role="tablist">
         <button data-tab="manual" class="on" role="tab">Choose side by side</button>
         <button data-tab="auto" role="tab">Evolve automatically</button>
+        <button data-tab="budget" role="tab">Compare budgets</button>
       </div>
       <div id="des-manual">
         <p id="des-man-note" class="muted"></p>
@@ -202,6 +204,19 @@
             <p class="muted small">Line: the kept environment's score. Yellow: the parent. Grey: its two variations.</p>
             <ul id="des-epochs-list"></ul></div>
         </div>
+      </div>
+      <div id="des-budget" hidden>
+        <p class="muted">The same example park, the same visitors and the same weather, run once for each robot budget. Only the money changes, so the difference shows what the extra robots buy. The robot controller buys robots until the budget runs out.</p>
+        <div class="des-row">
+          <label>A $<input id="cmp-a" type="number" min="0" max="600" step="10" value="150">k</label>
+          <label>B $<input id="cmp-b" type="number" min="0" max="600" step="10" value="300">k</label>
+          <label>C $<input id="cmp-c" type="number" min="0" max="600" step="10" placeholder="none">k</label>
+          <label>for <select id="cmp-steps"><option value="960" selected>a full day</option><option value="480">8 hours</option><option value="240">4 hours</option></select></label>
+          <button id="cmp-run" class="primary">Run the comparison</button>
+          <span id="cmp-progress" class="muted"></span>
+        </div>
+        <div id="cmp-summary"></div>
+        <div class="des-pair" id="cmp-cards"></div>
       </div>
       <h3>How we got here</h3>
       <ol id="des-lineage"></ol>
