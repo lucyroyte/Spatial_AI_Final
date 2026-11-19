@@ -179,7 +179,7 @@ export class View {
     this.camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 2, 14000);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
-    this.controls.maxPolarAngle = Math.PI * 0.47;
+    this.controls.maxPolarAngle = Math.PI * 0.44;
     this.controls.minDistance = 25;
     this.controls.maxDistance = 5000;
     this.controls.screenSpacePanning = false;
@@ -1385,6 +1385,12 @@ export class View {
 
   render() {
     this.controls.update();
+    // Keep the camera above the model: the target stays at or above the lake
+    // surface and the eye stays clear of the ground under it.
+    const cam = this.camera.position, tgt = this.controls.target;
+    if (tgt.y < 0) tgt.y = 0;
+    const floor = Math.max(0, ground(cam.x, -cam.z)) + 15;
+    if (cam.y < floor) { cam.y = floor; this.camera.lookAt(tgt); }
     this.renderer.render(this.scene, this.camera);
     this.labels.render(this.scene, this.camera);
   }

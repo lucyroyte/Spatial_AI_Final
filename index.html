@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Central Park · The Lake &amp; Ramble</title>
+  <title>Central Park Section</title>
   <meta name="description" content="A three.js simulation of the Lake and the Ramble in Central Park, built from NYC Open Data, where visitors and robots only know what they have seen, with an environment designer that generates, compares and evolves park layouts.">
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
@@ -19,7 +19,7 @@
   <div id="scene"></div>
 
   <header id="toolbar" role="toolbar" aria-label="Actions">
-    <div class="brand"><strong>Central Park</strong><span>The Lake &amp; Ramble</span></div>
+    <div class="brand"><strong>Central Park Section</strong><span>Designing a park for agents who only know what they've seen</span></div>
     <nav class="stages" aria-label="Park views">
       <button id="stage-explore" class="on" aria-pressed="true">Explore</button>
       <button id="stage-perceive" aria-pressed="false">Perceive</button>
@@ -38,6 +38,7 @@
       <button data-action="play" id="btn-play" title="Run time continuously (Space)">Play</button>
       <button data-action="advance" title="Advance one time step (one minute)">Step</button>
       <button data-action="rain" id="btn-rain" title="Cycle rain: none, light, heavy">Rain: none</button>
+      <button data-action="monitor" id="btn-monitor" title="Open the robot center's monitor (M)">Monitor</button>
     </div>
     <details class="more">
       <summary>Park tools</summary>
@@ -50,7 +51,6 @@
         </div>
         <div class="group" aria-label="Robot controller">
           <span class="group-label">Robot controller</span>
-          <button data-action="monitor" id="btn-monitor" title="Open the robot center's monitor (M)">Monitor</button>
           <button data-action="auto" id="btn-auto" class="on" title="Let the robot controller deploy, buy and park robots">Auto: on</button>
           <label class="budget" title="Robot budget: the total price of the fleet can't go over it">Budget $<input id="budget" type="number" min="0" max="999" step="10" value="150">k</label>
         </div>
