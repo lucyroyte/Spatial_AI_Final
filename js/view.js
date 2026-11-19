@@ -1,6 +1,6 @@
 // three.js rendering of the model. Ground plane (x east, y north, feet)
 // maps to world (x, height, -y). The map is about 2,600 by 2,400 ft, so
-// people, dogs and robots are drawn larger as the camera pulls back.
+// agents are built in feet, with a small readability allowance at overview scale.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
@@ -8,20 +8,26 @@ import * as G from './geometry.js';
 import { RULES } from './model.js';
 import { drawRobotMap, ROBOT_COLORS } from './monitor.js';
 import { KnowledgeLayer } from './knowledge.js';
+import { buildTerrain, drapeGeometry, terrainSheet } from './terrain.js';
 
-const w = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+// Ground height (display ft above the lake) under a model point. Every w()
+// placement stands on it, so heights passed to w() are above the ground.
+let ground = () => 0;
+const w = (x, y, h = 0) => new THREE.Vector3(x, h + ground(x, y), -y);
 
 export const COLORS = {
-  walking: '#f97316', standing: '#a855f7', sitting: '#0ea5e9', boating: '#facc15',
+  walking: '#1757d2', standing: '#3982ed', sitting: '#4ebcf6', boating: '#9bdcff',
   skin: '#f1c9a5', dog: '#8b5a2b',
-  mower: '#ea580c', steward: '#0f766e', skimmer: '#eab308',
+  mower: '#df5719', steward: '#f78336', skimmer: '#ffb05f',
   litter: ['#ff2bd6', '#ffe600', '#00e5ff', '#ff4d4d'], poop: '#5b3a1e', hole: '#3b2a1a',
-  grassShort: '#c8e27c', grassTall: '#2b6629', worn: '#8a6a3f', straw: '#e6d6a2',
-  leafLitter: '#7a5a3a', weeds: '#8fdc3c', path: '#dccfb2', meadow: '#9fb07f', planting: '#6f8f55',
-  building: '#b9b2a6', lakeBed: '#2d5560', water: '#3f86b8', duckweed: '#86b83a', select: '#22d3ee',
+  grassShort: '#adc26c', grassTall: '#35613a', worn: '#8a6a3f', straw: '#e6d6a2',
+  leafLitter: '#8d8762', weeds: '#7f9a52', path: '#dccfb2', meadow: '#869d60', planting: '#688653',
+  building: '#b9b2a6', lakeBed: '#2d5560', water: '#3e8587', duckweed: '#789e53', select: '#22d3ee',
   standing_water: '#2f80ed', fenceWood: '#9a6b3f', broken: '#e11d48', pad: '#334155',
 };
 const c3 = (hex) => new THREE.Color(hex);
+// Halo colors under agents: visitors blue, robots orange, matching their bodies.
+const HALO_COLORS = { visitor: '#2563eb', robot: '#f06a1d' };
 
 const NOISE = /* glsl */ `
 float hash(vec2 p){ p = fract(p*vec2(123.34, 456.21)); p += dot(p, p+45.32); return fract(p.x*p.y); }
@@ -56,6 +62,33 @@ function patchMaterial() {
   return m;
 }
 
+// World-space ripples stay continuous across the original lake polygons.
+function lakeMaterial(time) {
+  const material = new THREE.MeshPhongMaterial({
+    color: COLORS.water, shininess: 80, specular: '#72948b',
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uLakeTime = time;
+    shader.vertexShader = 'varying vec2 vLakeXZ;\n' + shader.vertexShader.replace(
+      '#include <worldpos_vertex>',
+      '#include <worldpos_vertex>\n vLakeXZ = (modelMatrix * vec4(transformed, 1.0)).xz;',
+    );
+    shader.fragmentShader = 'varying vec2 vLakeXZ;\nuniform float uLakeTime;\n' + NOISE +
+      shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+        float current = noise(vLakeXZ * 0.008);
+        float a = dot(vLakeXZ, vec2(0.12, 0.19)) + current * 4.0 - uLakeTime * 0.9;
+        float b = dot(vLakeXZ, vec2(-0.17, 0.07)) + uLakeTime * 0.64;
+        float detail = 1.0 - smoothstep(0.8, 3.0, max(fwidth(a), fwidth(b)));
+        diffuseColor.rgb *= 0.83 + current * 0.36 + detail * sin(a) * cos(b) * 0.07;
+      `).replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        normal = normalize(normal + mat3(viewMatrix) * vec3(cos(a), 0.0, sin(b)) * 0.12 * detail);
+        float grazing = pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 3.0);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.29, 0.48, 0.46), grazing * 0.6);
+      `);
+  };
+  return material;
+}
+
 // polygons: [[outer, ...holes], ...] with points {x, y}
 function shapesOf(polygons) {
   return polygons.map(([outer, ...holes]) => {
@@ -70,13 +103,50 @@ function flatMesh(polygons, mat, h, depth = 0) {
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.y = h;
+  mesh.receiveShadow = true;
   return mesh;
 }
+// Contour lines every 5 ft of real elevation, darker every 20 ft, drawn from
+// the draped height (shape-space z), so every ground layer agrees.
+const CONTOUR = { uK: { value: 1 }, uLake: { value: 57 }, uContour: { value: 1 } };
+function withContours(mat) {
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (sh, r) => {
+    if (prev) prev(sh, r);
+    Object.assign(sh.uniforms, CONTOUR);
+    sh.vertexShader = 'varying float vGroundH;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vGroundH = position.z;');
+    sh.fragmentShader = 'varying float vGroundH;\nuniform float uK, uLake, uContour;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', `#include <dithering_fragment>
+      if (uContour > 0.0 && vGroundH > 0.5) {
+        float e = uLake + vGroundH / uK;
+        float c = e / 5.0, f = abs(fract(c - 0.5) - 0.5) / max(fwidth(c), 1e-4);
+        float c2 = e / 20.0, f2 = abs(fract(c2 - 0.5) - 0.5) / max(fwidth(c2), 1e-4);
+        float minor = 1.0 - smoothstep(0.0, 1.0, f), major = 1.0 - smoothstep(0.0, 1.6, f2);
+        float fade = 1.0 - smoothstep(0.35, 1.0, fwidth(c) * 6.0);
+        gl_FragColor.rgb *= 1.0 - max(minor * 0.16, major * 0.32) * fade * uContour;
+      }`);
+  };
+  mat.customProgramCacheKey = () => 'contour' + (prev ? prev.toString().length : 0);
+  return mat;
+}
+
+// A ground mesh: the polygons draped over the terrain, h above it.
+function groundMesh(polygons, mat, h) {
+  const mesh = new THREE.Mesh(drapeGeometry(new THREE.ShapeGeometry(shapesOf(polygons)), ground), mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = h;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+// Outlines follow the ground, so long edges are split every 10 ft.
 function ringLines(polygons, h) {
   const pts = [];
   for (const poly of polygons) for (const ring of poly) for (let i = 0; i < ring.length; i++) {
     const a = ring[i], b = ring[(i + 1) % ring.length];
-    pts.push(w(a.x, a.y, h), w(b.x, b.y, h));
+    const n = Math.max(1, Math.ceil(G.dist(a, b) / 10));
+    for (let j = 0; j < n; j++) {
+      const t0 = j / n, t1 = (j + 1) / n;
+      pts.push(w(a.x + (b.x - a.x) * t0, a.y + (b.y - a.y) * t0, h), w(a.x + (b.x - a.x) * t1, a.y + (b.y - a.y) * t1, h));
+    }
   }
   return new THREE.BufferGeometry().setFromPoints(pts);
 }
@@ -90,6 +160,9 @@ export class View {
     this.model = model;
     this.container = container;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     container.appendChild(this.renderer.domElement);
@@ -99,32 +172,47 @@ export class View {
     container.appendChild(this.labels.domElement);
 
     this.scene = new THREE.Scene();
-    this.sky = { dry: c3('#dfe8ec'), wet: c3('#a9b5bf') };
+    this.sky = { dry: c3('#e6ede5'), wet: c3('#adbcbf'), night: c3('#171c25') };
     this.scene.background = this.sky.dry.clone();
-    this.scene.fog = new THREE.Fog(this.scene.background, 4000, 9000);
+    this.scene.fog = new THREE.Fog(this.scene.background, 2700, 6600);
 
     this.camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 2, 14000);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
-    this.controls.maxPolarAngle = Math.PI * 0.47;
-    this.controls.minDistance = 25;
+    this.controls.maxPolarAngle = Math.PI * 0.44;
+    this.controls.minDistance = 12;
+    // A drag or zoom by the user takes over from a camera flight.
+    this.controls.addEventListener('start', () => { this.fly = null; });
     this.controls.maxDistance = 5000;
     this.controls.screenSpacePanning = false;
     this.fitCamera();
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x6b7a5a, 1.7);
+    const hemi = new THREE.HemisphereLight(0xe1efff, 0x8b7c50, 1.5);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff3df, 1.7);
-    sun.position.set(-1200, 2200, 900);
+    const sun = new THREE.DirectionalLight(0xffecd0, 2.15);
+    sun.position.set(-1550, 1700, 1000);
+    sun.castShadow = true;
+    Object.assign(sun.shadow.camera, { left: -1900, right: 1900, top: 1900, bottom: -1900, near: 10, far: 5400 });
+    sun.shadow.camera.updateProjectionMatrix();
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.00015;
+    sun.shadow.normalBias = 1.5;
+    this.renderer.shadowMap.needsUpdate = true;
     this.scene.add(sun);
     this.hemi = hemi; this.sun = sun;
 
     this.meshes = new Map(); // entity id -> Object3D
     this.pickables = [];     // meshes for raycast picking (regions, fences)
     this.entityScale = 1;
+    this.night = false;
+    this.visitorTrails = new WeakMap();
+    this.terrain = buildTerrain(model.layout);
+    ground = this.terrain.at;
+    CONTOUR.uK.value = this.terrain.exaggeration;
+    CONTOUR.uLake.value = this.terrain.lakeZ;
     this.buildStatic();
     this.buildDynamicLayers();
-    this.knowledge = new KnowledgeLayer(this.scene, model);
+    this.knowledge = new KnowledgeLayer(this.scene, model, ground);
 
     window.addEventListener('resize', () => this.resize());
   }
@@ -134,17 +222,95 @@ export class View {
     const f = Math.max(1, 1.2 / a);
     this.camera.aspect = a;
     this.controls.target.set(0, 0, -40);
-    this.camera.position.set(0, 1900 * f, 1500 * f);
+    this.camera.position.set(-345 * f, 2240 * f, 1800 * f);
     this.camera.lookAt(this.controls.target);
     this.camera.updateProjectionMatrix();
   }
+  setScenePreset(preset) {
+    this.fly = this.follow = this.flyHome = null;
+    this.night = preset === 'night';
+    this.fitCamera();
+    if (preset === 'relief') {
+      // Low from the south-west, looking up the slope to Vista Rock.
+      const f = Math.max(1, 1.6 / this.camera.aspect);
+      this.controls.target.set(120, 35, -260);
+      this.camera.position.set(120 - 1150 * f, 560 * f, -260 + 1500 * f);
+      this.camera.lookAt(this.controls.target);
+      return;
+    }
+    if (preset !== 'lakeside') return;
+
+    const { pathPoint, waterPoint } = this.model.layout.landing;
+    const target = w(pathPoint.x, pathPoint.y, 4);
+    const direction = w(waterPoint.x, waterPoint.y).sub(target);
+    direction.y = 0;
+    const up = this.camera.up;
+    direction.normalize().applyAxisAngle(up, -1.18);
+    target.addScaledVector(direction.clone().cross(up), 32);
+    const distance = Math.max(1, 1.05 / this.camera.aspect);
+    this.controls.target.copy(target);
+    this.camera.position.copy(target).addScaledVector(direction, 205 * distance);
+    this.camera.position.y += 100 * distance;
+    this.camera.lookAt(target);
+  }
+
   resize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.labels.setSize(window.innerWidth, window.innerHeight);
   }
+  // Fly down to an entity at about its own eye level and keep following it.
+  // The pose before the first flight is kept so flyBack() can return to it.
+  flyTo(id, dist = 34, pitch = 0.32) {
+    const o = this.meshes.get(id);
+    // A just-added entity gets its mesh on the next update; try again then.
+    this.pendingFly = o ? null : { id, dist, pitch };
+    if (!o) return false;
+    const cam = this.camera.position, tgt = this.controls.target;
+    if (!this.flyHome) this.flyHome = { pos: cam.clone(), tgt: tgt.clone() };
+    const to = o.position.clone();
+    to.y += 3;
+    // Keep the current compass direction so the flight feels like a zoom.
+    const dir = cam.clone().sub(tgt).setY(0);
+    if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
+    dir.normalize().multiplyScalar(dist * Math.cos(pitch));
+    const pos = to.clone().add(dir);
+    pos.y = to.y + dist * Math.sin(pitch);
+    this.fly = { from: { pos: cam.clone(), tgt: tgt.clone() }, to: { pos, tgt: to }, t0: performance.now(), dur: 1100 };
+    this.follow = { id, last: o.position.clone() };
+    return true;
+  }
+  flyBack() {
+    this.follow = this.pendingFly = null;
+    if (!this.flyHome) return;
+    const cam = this.camera.position, tgt = this.controls.target;
+    this.fly = { from: { pos: cam.clone(), tgt: tgt.clone() }, to: this.flyHome, t0: performance.now(), dur: 900 };
+    this.flyHome = null;
+  }
+  // Called each frame before the controls update.
+  stepCamera() {
+    const cam = this.camera.position, tgt = this.controls.target;
+    if (this.pendingFly && this.meshes.has(this.pendingFly.id)) this.flyTo(this.pendingFly.id, this.pendingFly.dist, this.pendingFly.pitch);
+    if (this.follow) {
+      const o = this.meshes.get(this.follow.id);
+      if (!o) this.follow = null;
+      else {
+        const d = o.position.clone().sub(this.follow.last);
+        this.follow.last.copy(o.position);
+        if (this.fly) { this.fly.to.pos.add(d); this.fly.to.tgt.add(d); } else { cam.add(d); tgt.add(d); }
+      }
+    }
+    if (!this.fly) return;
+    const f = this.fly, t = Math.min(1, (performance.now() - f.t0) / f.dur);
+    const e = t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+    cam.lerpVectors(f.from.pos, f.to.pos, e);
+    tgt.lerpVectors(f.from.tgt, f.to.tgt, e);
+    if (t >= 1) this.fly = null;
+  }
+
   focus(x, y, dist = 420) {
+    this.fly = this.follow = this.flyHome = null;
     const t = w(x, y, 0);
     const off = this.camera.position.clone().sub(this.controls.target).setLength(dist);
     this.controls.target.copy(t);
@@ -158,43 +324,70 @@ export class View {
     const o = new CSS2DObject(el);
     o.position.copy(pos);
     this.scene.add(o);
+    // Status badges outrank place names, and small labels give way to both.
+    const priority = cls.includes('badge') ? 3 : cls.includes('small') ? 1 : 2;
+    (this.mapLabels ||= []).push({ o, el, priority });
     return o;
+  }
+
+  // Hides any map label that would overlap a higher-priority one on screen.
+  // CSS2DRenderer owns each element's display, so this uses visibility.
+  declutterLabels() {
+    const kept = [];
+    const items = this.mapLabels.filter((l) => l.o.visible && l.el.style.display !== 'none' && l.el.textContent);
+    items.sort((a, b) => b.priority - a.priority);
+    for (const l of this.mapLabels) if (!items.includes(l)) l.el.style.visibility = '';
+    for (const l of items) {
+      l.el.style.visibility = '';
+      const r = l.el.getBoundingClientRect();
+      const hit = kept.some((k) => r.left < k.right + 4 && r.right > k.left - 4 && r.top < k.bottom + 3 && r.bottom > k.top - 3);
+      if (hit) l.el.style.visibility = 'hidden';
+      else kept.push(r);
+    }
   }
 
   // ---------- static scene ----------
   buildStatic() {
     const m = this.model, L = m.layout, S = this.scene, B = L.bounds;
     const lam = (color) => new THREE.MeshLambertMaterial({ color });
-    // Ground outside the park, then the park itself.
-    const base = new THREE.Mesh(new THREE.BoxGeometry(B.x1 - B.x0 + 40, 4, B.y1 - B.y0 + 40), lam('#b8b4aa'));
-    base.position.y = -4.2;
+    // The model's base: a 12 ft slab cut to the park outline, then the park itself.
+    // Its top stays below the lake bed (-3.9) so the water shows through.
+    const base = flatMesh(L.other.park.map(([outer]) => [outer]), lam('#a5a18d'), -16.2, 12);
     S.add(base);
+    // Its sides rise to meet the terrain, so the cut edge shows the relief.
+    S.add(this.buildSkirt(L.other.park.map(([outer]) => outer), -16.2, lam('#c4b596')));
     // The park ground has the lake cut out so the water shows through.
     const lakeHoles = L.lake.polygons.map((poly) => poly[0]);
-    S.add(flatMesh(L.other.park.map(([outer, ...holes]) => [outer, ...holes, ...lakeHoles]), lam(COLORS.meadow), 0.05));
-    S.add(flatMesh(L.other.plantings, lam(COLORS.planting), 0.3));
-    S.add(flatMesh(L.other.water, lam(COLORS.water), 0.1));
-    const bld = flatMesh(L.other.buildings, lam(COLORS.building), 0, 14);
-    S.add(bld);
+    S.add(this.buildGroundSheet(L, lakeHoles));
+    // Each building sits on the lowest ground under it.
+    for (const poly of L.other.buildings) {
+      const hs = poly[0].map((p) => ground(p.x, p.y));
+      const lo = Math.min(...hs), mean = hs.reduce((t, h) => t + h, 0) / hs.length;
+      const bld = flatMesh([poly], lam(COLORS.building), lo - 1, 15 + mean - lo);
+      bld.castShadow = true;
+      S.add(bld);
+    }
 
     S.add(flatMesh(L.lake.polygons, lam(COLORS.lakeBed), -3.9));
-    this.lakeWater = flatMesh(L.lake.polygons, new THREE.MeshPhongMaterial({ color: COLORS.water, transparent: true, opacity: 0.9, shininess: 80, specular: 0x99bbdd }), waterY(-2));
+    this.lakeTime = { value: 0 };
+    this.lakeWater = flatMesh(L.lake.polygons, lakeMaterial(this.lakeTime), waterY(-2));
     this.lakeWater.userData.ref = { kind: 'lake', id: 'lake' };
     S.add(this.lakeWater);
     this.pickables.push(this.lakeWater);
 
     // Paths, lawns and the woods understory: one mesh per region.
     this.regionMeshes = {};
-    const pathMat = lam(COLORS.path);
+    const pathMat = this.pathMaterial = lam(COLORS.path);
+    pathMat.emissive.set('#ad713b');
     for (const p of L.paths) {
-      const mesh = flatMesh(p.polygons, pathMat, REGION_TOP.path);
+      const mesh = groundMesh(p.polygons, pathMat, REGION_TOP.path);
       mesh.userData.ref = { kind: 'path', id: p.id };
       S.add(mesh); this.pickables.push(mesh); this.regionMeshes[p.id] = mesh;
     }
     for (const l of L.lawns) {
-      const mat = patchMaterial();
+      const mat = withContours(patchMaterial());
       mat.userData.u.uPatch.value.set(COLORS.worn);
-      const mesh = flatMesh(l.polygons, mat, REGION_TOP.lawn);
+      const mesh = groundMesh(l.polygons, mat, REGION_TOP.lawn);
       mesh.userData.ref = { kind: 'lawn', id: l.id };
       S.add(mesh); this.pickables.push(mesh); this.regionMeshes[l.id] = mesh;
       // Orange rope around a closed lawn.
@@ -202,14 +395,16 @@ export class View {
       rope.visible = false;
       S.add(rope);
       mesh.userData.rope = rope;
-      mesh.userData.badge = this.label('', w(l.anchor.x, l.anchor.y - 22, 8), 'map-badge');
+      mesh.userData.badge = this.label('', w(l.anchor.x, l.anchor.y, 3), 'map-badge');
+      mesh.userData.badge.center.set(0.5, -0.9); // just below the lawn's name
+      mesh.userData.badge.visible = false;
     }
     {
-      const mat = patchMaterial();
+      const mat = withContours(patchMaterial());
       mat.userData.u.uBase.value.set(COLORS.leafLitter);
       mat.userData.u.uPatch.value.set(COLORS.weeds);
       mat.userData.u.uScale.value = 0.015;
-      const mesh = flatMesh(L.woods.polygons, mat, REGION_TOP.woods);
+      const mesh = groundMesh(L.woods.polygons, mat, REGION_TOP.woods);
       mesh.userData.ref = { kind: 'woods', id: 'woods' };
       S.add(mesh); this.pickables.push(mesh); this.regionMeshes.woods = mesh;
     }
@@ -240,6 +435,37 @@ export class View {
     dock.rotation.y = Math.atan2(lp.waterPoint.x - lp.pathPoint.x, lp.waterPoint.y - lp.pathPoint.y);
     dock.userData.ref = { kind: 'landing', id: 'landing' };
     S.add(dock); this.pickables.push(dock);
+    dock.receiveShadow = true;
+
+    const deck = new THREE.Group();
+    deck.position.copy(dock.position);
+    deck.rotation.copy(dock.rotation);
+    const wood = lam('#806047');
+    const planks = Math.ceil(dockLen / 0.95);
+    const plank = new THREE.BoxGeometry(6.15, 0.16, dockLen / planks - 0.045);
+    for (let i = 0; i < planks; i++) {
+      const board = new THREE.Mesh(plank, wood);
+      board.position.set(0, 0.36, dockLen * ((i + 0.5) / planks - 0.5));
+      board.receiveShadow = true;
+      deck.add(board);
+    }
+    const railLength = dockLen * 0.67;
+    const rail = new THREE.BoxGeometry(0.19, 0.16, railLength);
+    const post = new THREE.BoxGeometry(0.27, 2.65, 0.27);
+    for (const x of [-2.85, 2.85]) {
+      const handrail = new THREE.Mesh(rail, wood);
+      handrail.position.set(x, 2.85, -dockLen / 2 + railLength / 2);
+      handrail.castShadow = true;
+      deck.add(handrail);
+      for (let i = 0; i <= 3; i++) {
+        const support = new THREE.Mesh(post, wood);
+        support.position.set(x, 1.57, -dockLen / 2 + railLength * i / 3);
+        support.castShadow = true;
+        deck.add(support);
+      }
+    }
+    S.add(deck);
+    this.buildShoreReeds(lp);
 
     // Robot center: a charging pad on the path and a floating dock for skimmers.
     const c = L.center;
@@ -253,6 +479,7 @@ export class View {
     fdock.userData.ref = { kind: 'center', id: 'center' };
     S.add(pad, ring, fdock); this.pickables.push(pad, fdock);
     this.buildCenterBuilding();
+    this.buildPathLights();
 
     // Labels for named places only.
     for (const r of [...L.lawns, L.woods, L.lake]) if (isNamed(r.name)) this.label(r.name, w(r.anchor.x, r.anchor.y, 3));
@@ -260,6 +487,139 @@ export class View {
     this.label('Boat landing', w(lp.pathPoint.x, lp.pathPoint.y - 12, 3), 'map-label small');
     this.label('Robot center', w(this.buildingPos.x, this.buildingPos.y, 26), 'map-label small');
     this.label('Skimmer dock', w(c.dock.x, c.dock.y - 16, 3), 'map-label small');
+  }
+
+  buildShoreReeds({ position }) {
+    const boundary = this.model.layout.lake.boundary;
+    const rand = G.mulberry32(467);
+    const vertices = [];
+    const colors = [];
+    const shades = ['#687342', '#9a9b56', '#b0a465'].map(c3);
+    for (const [i, a] of boundary.entries()) {
+      const b = boundary[(i + 1) % boundary.length];
+      const length = G.dist(a, b);
+      for (let offset = 1.5; offset < length; offset += 2.4) {
+        const x = THREE.MathUtils.lerp(a.x, b.x, offset / length);
+        const y = THREE.MathUtils.lerp(a.y, b.y, offset / length);
+        const distance = G.dist({ x, y }, position);
+        if (distance < 13 || distance > 110 || rand() < 0.42) continue;
+        for (let blade = 0; blade < 7; blade++) {
+          const angle = rand() * Math.PI * 2;
+          const dx = Math.cos(angle), dz = Math.sin(angle);
+          const width = 0.05 + rand() * 0.09;
+          const height = 0.8 + rand() * 3.1;
+          const lean = 0.35 + rand() * 0.9;
+          const bx = x + dx * rand(), bz = -y + dz * rand();
+          vertices.push(bx - dz * width, 0.12, bz + dx * width,
+            bx + dz * width, 0.12, bz - dx * width,
+            bx + dx * lean, height, bz + dz * lean);
+          const color = shades[Math.floor(rand() * shades.length)];
+          colors.push(color.r * 0.55, color.g * 0.55, color.b * 0.55,
+            color.r * 0.66, color.g * 0.66, color.b * 0.66, color.r, color.g, color.b);
+        }
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.computeVertexNormals();
+    this.scene.add(new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({
+      vertexColors: true, side: THREE.DoubleSide,
+    })));
+  }
+
+  // Meadow, plantings and ponds painted onto one draped grid; the lake is cut
+  // out of the texture so the water shows through.
+  buildGroundSheet(L, lakeHoles) {
+    const B = L.bounds, W = B.x1 - B.x0, H = B.y1 - B.y0;
+    const canvas = document.createElement('canvas');
+    canvas.width = 2048; canvas.height = Math.round(2048 * H / W);
+    const ctx = canvas.getContext('2d'), sx = canvas.width / W, sy = canvas.height / H;
+    const fill = (polygons, color) => {
+      ctx.fillStyle = color;
+      for (const poly of polygons) {
+        ctx.beginPath();
+        for (const ring of poly) ring.forEach((p, i) => ctx[i ? 'lineTo' : 'moveTo']((p.x - B.x0) * sx, (B.y1 - p.y) * sy));
+        ctx.fill('evenodd');
+      }
+    };
+    fill(L.other.park, COLORS.meadow);
+    fill(L.other.plantings, COLORS.planting);
+    fill(L.other.water, COLORS.water);
+    ctx.globalCompositeOperation = 'destination-out';
+    fill(lakeHoles.map((ring) => [ring]), '#000');
+    // Islands are holes in the lake polygons: put their ground back.
+    ctx.globalCompositeOperation = 'source-over';
+    fill(L.lake.polygons.flatMap(([, ...islands]) => islands.map((ring) => [ring])), COLORS.meadow);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    const mat = withContours(new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5 }));
+    const mesh = new THREE.Mesh(terrainSheet(B, ground), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = 0.05;
+    mesh.receiveShadow = true;
+    return mesh;
+  }
+
+  // A vertical wall from `bottom` up to the ground along each ring.
+  buildSkirt(rings, bottom, mat) {
+    const pos = [];
+    for (const ring of rings) for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], b = ring[(i + 1) % ring.length];
+      const n = Math.max(1, Math.ceil(G.dist(a, b) / 10));
+      for (let j = 0; j < n; j++) {
+        const p = { x: a.x + (b.x - a.x) * j / n, y: a.y + (b.y - a.y) * j / n };
+        const q = { x: a.x + (b.x - a.x) * (j + 1) / n, y: a.y + (b.y - a.y) * (j + 1) / n };
+        const hp = ground(p.x, p.y) + 0.05, hq = ground(q.x, q.y) + 0.05;
+        pos.push(p.x, bottom, -p.y, q.x, bottom, -q.y, q.x, hq, -q.y,
+          p.x, bottom, -p.y, q.x, hq, -q.y, p.x, hp, -p.y);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    // Like a layered site model: a thin dark line at every 5 ft of real
+    // elevation (the contour interval), so the cut edge reads as stacked boards.
+    const m = mat.clone();
+    m.side = THREE.DoubleSide;
+    m.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, CONTOUR);
+      sh.vertexShader = 'varying float vY;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vY = position.y;');
+      sh.fragmentShader = 'varying float vY;\nuniform float uK, uLake;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', `#include <dithering_fragment>
+        float c = vY / (5.0 * uK), f = abs(fract(c) - 0.5);
+        float edge = 1.0 - smoothstep(0.0, 1.5, (0.5 - f) / max(fwidth(c), 1e-4));
+        float band = mod(floor(c), 2.0);
+        gl_FragColor.rgb *= (vY > 0.0 ? 0.94 + 0.06 * band : 0.78) * (1.0 - edge * 0.35);`);
+    };
+    m.customProgramCacheKey = () => 'skirt';
+    return new THREE.Mesh(geo, m);
+  }
+
+  buildPathLights() {
+    const positions = [];
+    for (const { anchor } of this.model.layout.paths) {
+      const p = w(anchor.x, anchor.y, 4.8);
+      positions.push(p.x, p.y, p.z);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, 'rgba(255,255,255,1)');
+    gradient.addColorStop(0.12, 'rgba(255,255,255,0.85)');
+    gradient.addColorStop(0.45, 'rgba(255,255,255,0.22)');
+    gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    this.pathLights = new THREE.Points(geometry, new THREE.PointsMaterial({
+      color: '#ffc27a', size: 43, map: new THREE.CanvasTexture(canvas),
+      blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
+    }));
+    this.pathLights.visible = false;
+    this.scene.add(this.pathLights);
   }
 
   // The building stands next to the charging pad, on ground nobody walks on if possible.
@@ -340,16 +700,31 @@ export class View {
   updateTrails(lakeY) {
     const g = this.trailLines.geometry;
     let k = 0;
-    if (this.showTrails) {
+    if (this.showTrails || this.night) {
       const pa = g.attributes.position.array, ca = g.attributes.color.array, col = new THREE.Color(), max = pa.length;
       for (const r of this.model.robots()) {
-        const tr = r.trail, h = r.kind === 'skimmer' ? lakeY + 0.4 : 1.6;
+        const tr = r.trail, water = r.kind === 'skimmer';
+        const hy = (q) => (water ? lakeY + 0.4 : 2 + ground(q.x, q.y));
         col.set(ROBOT_COLORS[r.kind]);
         for (let i = 1; i < tr.length && k + 6 <= max; i++) {
-          pa.set([tr[i - 1].x, h, -tr[i - 1].y, tr[i].x, h, -tr[i].y], k);
+          pa.set([tr[i - 1].x, hy(tr[i - 1]), -tr[i - 1].y, tr[i].x, hy(tr[i]), -tr[i].y], k);
           const f = 0.25 + 0.75 * (i / tr.length);
           ca.set([col.r * f, col.g * f, col.b * f, col.r * f, col.g * f, col.b * f], k);
           k += 6;
+        }
+      }
+      if (this.night) {
+        col.set('#71cfff');
+        for (const p of this.model.people) {
+          const trail = this.visitorTrails.get(p) || [];
+          for (let i = 1; i < trail.length && k + 6 <= max; i++) {
+            const start = trail[i - 1], end = trail[i];
+            if (Math.hypot(end.x - start.x, end.y - start.y) > 160) continue;
+            pa.set([start.x, start.h, -start.y, end.x, end.h, -end.y], k);
+            const fade = 0.28 + 0.72 * i / trail.length;
+            ca.set([col.r * fade, col.g * fade, col.b * fade, col.r * fade, col.g * fade, col.b * fade], k);
+            k += 6;
+          }
         }
       }
       g.attributes.position.needsUpdate = true;
@@ -359,30 +734,91 @@ export class View {
   }
 
   buildTrees() {
-    // Leave room for the robot center building.
-    const bp = this.buildingPos;
-    const trees = this.model.layout.trees.filter(([x, y, r]) => Math.hypot(x - bp.x, y - bp.y) > 18 + r * 0.6);
+    const layout = this.model.layout;
+    const pathDistance = layout.distanceField((cell) => layout.regionOfCell(cell)?.kind === 'path');
+    const keepTree = G.mulberry32(73);
+    // Open up sightlines at paths and the landing while keeping the woods continuous.
+    const trees = layout.trees.filter(([x, y, radius]) => {
+      const chance = keepTree();
+      const point = { x, y };
+      const cell = layout.cellAt(point);
+      const kind = layout.regionOfCell(cell)?.kind;
+      if (G.dist(point, this.buildingPos) < 18 + radius * 0.6) return false;
+      if (kind === 'path' || kind === 'lawn' || kind === 'lake') return false;
+      if (G.dist(point, layout.landing.position) < 150) return chance < 0.25;
+      if (pathDistance[cell] * layout.cell < radius + 12) return chance < 0.32;
+      return chance < (kind === 'woods' ? 0.76 : 0.48);
+    });
     const rand = G.mulberry32(42);
-    const trunkGeo = new THREE.CylinderGeometry(0.5, 0.8, 1, 5);
-    const crownGeo = new THREE.IcosahedronGeometry(1, 0);
-    const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial({ color: '#5b4330' }), trees.length);
-    const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshLambertMaterial({ color: '#ffffff', flatShading: true }), trees.length);
-    const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), E = new THREE.Euler();
-    const cA = c3('#2f6a35'), cB = c3('#5a9446'), tmp = new THREE.Color();
-    trees.forEach(([x, y, r], i) => {
-      const h = 14 + r * 1.3 + rand() * 6;
-      const cr = Math.max(5, r * 0.8);
-      M.compose(w(x, y, h * 0.3), Q, V.set(1.6, h * 0.6, 1.6)); trunks.setMatrixAt(i, M);
-      Q.setFromEuler(E.set(0, rand() * 6, 0));
-      M.compose(w(x, y, h * 0.6 + cr * 0.4), Q, V.set(cr, cr * 0.8, cr)); crowns.setMatrixAt(i, M);
-      Q.identity();
-      crowns.setColorAt(i, tmp.copy(cA).lerp(cB, rand()));
+    const trunkGeo = new THREE.CylinderGeometry(0.45, 0.8, 1, 6);
+    const crownGeo = new THREE.IcosahedronGeometry(1, 1);
+    const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial({ color: '#69513b' }), trees.length);
+    const foliage = new THREE.MeshLambertMaterial();
+    foliage.onBeforeCompile = (shader) => {
+      shader.vertexShader = 'varying vec3 vCanopy;\n' + shader.vertexShader.replace(
+        '#include <project_vertex>', 'vCanopy = (instanceMatrix * vec4(transformed, 1.0)).xyz;\n#include <project_vertex>',
+      );
+      shader.fragmentShader = 'varying vec3 vCanopy;\n' + NOISE +
+        shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+          vec2 leaf = vCanopy.xz + vCanopy.y * vec2(0.73, 1.3);
+          float grain = mix(noise(leaf * 0.58), 0.5, smoothstep(0.3, 2.5, length(fwidth(leaf))));
+          diffuseColor.rgb *= 0.8 + grain * 0.42;
+        `);
+    };
+    const crowns = new THREE.InstancedMesh(crownGeo, foliage, trees.length * 4);
+    const needles = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 9), foliage, Math.ceil(trees.length / 11) * 4);
+    needles.castShadow = true;
+    needles.receiveShadow = true;
+    let broadleafCount = 0, evergreenCount = 0;
+    crowns.castShadow = true;
+    crowns.receiveShadow = true;
+    const matrix = new THREE.Matrix4(), rotation = new THREE.Quaternion();
+    const size = new THREE.Vector3(), angles = new THREE.Euler();
+    const greens = ['#31583a', '#3c693b', '#50743e', '#65834a', '#788e45'].map(c3);
+    const color = new THREE.Color(), upAxis = new THREE.Vector3(0, 1, 0);
+    trees.forEach(([x, y, radius], i) => {
+      const height = 15 + radius * (1.2 + rand() * 0.55);
+      const spread = Math.max(5, radius * (0.68 + rand() * 0.22));
+      const green = greens[Math.floor(rand() * greens.length)];
+      rotation.identity();
+      matrix.compose(w(x, y, height * 0.35), rotation, size.set(1.6, height * 0.7, 1.6));
+      trunks.setMatrixAt(i, matrix);
+      const bearing = rand() * Math.PI * 2;
+      if (i % 11 === 0) {
+        rotation.setFromAxisAngle(upAxis, bearing);
+        for (let tier = 0; tier < 4; tier++) {
+          const width = spread * (0.75 - tier * 0.13);
+          matrix.compose(w(x, y, height * (0.43 + tier * 0.19)),
+            rotation, size.set(width, height * 0.48, width));
+          needles.setMatrixAt(evergreenCount, matrix);
+          needles.setColorAt(evergreenCount++, color.set('#355345').offsetHSL(0, 0, tier * 0.029));
+        }
+        return;
+      }
+      for (let lobe = 0; lobe < 4; lobe++) {
+        const central = lobe === 0;
+        const angle = bearing + lobe * Math.PI * 2 / 3;
+        const offset = central ? 0 : spread * 0.53;
+        const width = spread * (central ? 0.78 : 0.53 + rand() * 0.15);
+        const top = height * (central ? 0.94 : 0.67 + rand() * 0.17);
+        rotation.setFromEuler(angles.set(rand() * 0.4, angle, rand() * 0.4));
+        matrix.compose(w(x + Math.cos(angle) * offset, y + Math.sin(angle) * offset, top),
+          rotation, size.set(width, width * (0.77 + rand() * 0.47), width));
+        const index = broadleafCount++;
+        crowns.setMatrixAt(index, matrix);
+        crowns.setColorAt(index, color.copy(green).offsetHSL(0, 0, (rand() - 0.5) * 0.09));
+      }
     });
     this.trees = new THREE.Group();
-    this.trees.add(trunks, crowns);
+    crowns.count = broadleafCount;
+    needles.count = evergreenCount;
+    this.trees.add(trunks, crowns, needles);
     this.scene.add(this.trees);
   }
-  setTreesVisible(v) { this.trees.visible = v; }
+  setTreesVisible(v) {
+    this.trees.visible = v;
+    this.renderer.shadowMap.needsUpdate = true;
+  }
 
   // Fences are instanced: posts and two rails per intact segment, red cones
   // at both ends of a broken one, and an invisible box per segment for clicks.
@@ -453,11 +889,33 @@ export class View {
     const S = this.scene, L = this.model.layout, B = L.bounds;
     // Duckweed cells.
     const cells = L.grid.cells;
-    const plane = new THREE.PlaneGeometry(L.grid.CELL, L.grid.CELL);
-    plane.rotateX(-Math.PI / 2);
-    this.duck = new THREE.InstancedMesh(plane, new THREE.MeshLambertMaterial({ color: '#ffffff' }), cells.length);
-    const rand = G.mulberry32(9), col = new THREE.Color();
-    cells.forEach((c, i) => this.duck.setColorAt(i, col.set(COLORS.duckweed).offsetHSL((rand() - 0.5) * 0.04, 0, (rand() - 0.5) * 0.08)));
+    // Each cell is a clump that overlaps its neighbours and is turned and
+    // stretched at random, so covered water reads as irregular mats, not a dot grid.
+    const patch = new THREE.PlaneGeometry(L.grid.CELL * 1.7, L.grid.CELL * 1.7);
+    patch.rotateX(-Math.PI / 2);
+    // The texture is a clump of small fronds, denser in the middle: irregular
+    // mats from afar, individual leaves up close.
+    const soft = document.createElement('canvas');
+    soft.width = soft.height = 128;
+    const sctx = soft.getContext('2d');
+    const frond = G.mulberry32(21);
+    for (let k = 0; k < 90; k++) {
+      const a = frond() * Math.PI * 2, r = Math.sqrt(frond()) * 50;
+      const x = 64 + Math.cos(a) * r, y = 64 + Math.sin(a) * r;
+      sctx.fillStyle = `rgba(255,255,255,${(0.95 - r / 70).toFixed(2)})`;
+      sctx.beginPath();
+      sctx.ellipse(x, y, 3 + frond() * 5, 2.5 + frond() * 4, frond() * Math.PI, 0, Math.PI * 2);
+      sctx.fill();
+    }
+    this.duck = new THREE.InstancedMesh(patch, new THREE.MeshLambertMaterial({
+      color: '#ffffff', map: new THREE.CanvasTexture(soft), transparent: true, opacity: 0.85, depthWrite: false,
+    }), cells.length);
+    const rand = G.mulberry32(9), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
+    this.duckOffsets = cells.map((_, i) => {
+      this.duck.setColorAt(i, col.set(COLORS.duckweed).offsetHSL((rand() - 0.5) * 0.05, -0.08, (rand() - 0.5) * 0.08));
+      const q = new THREE.Quaternion().setFromAxisAngle(up, rand() * Math.PI);
+      return [(rand() - 0.5) * L.grid.CELL * 0.6, (rand() - 0.5) * L.grid.CELL * 0.6, q, 0.75 + rand() * 0.6];
+    });
     this.duck.renderOrder = 1;
     S.add(this.duck);
 
@@ -487,10 +945,37 @@ export class View {
     this.leashes = lineLayer('#1f2937', { opacity: 0.85 });
     this.wakes = lineLayer('#ffffff', { opacity: 0.85 });
     this.targets = lineLayer('#ffffff', { vertexColors: true, opacity: 0.9, depthTest: false });
-    this.trailLines = lineLayer('#ffffff', { vertexColors: true, opacity: 0.85, depthTest: false, segments: 20000 });
+    // Trails lie on the ground and hills hide them; a faint copy drawn
+    // without depth keeps the hidden parts readable as a ghost.
+    this.trailLines = lineLayer('#ffffff', { vertexColors: true, opacity: 0.9, segments: 20000 });
+    const ghost = new THREE.LineSegments(this.trailLines.geometry, this.trailLines.material.clone());
+    Object.assign(ghost.material, { depthTest: false, depthWrite: false, opacity: 0.18 });
+    ghost.frustumCulled = false;
+    ghost.renderOrder = 2;
+    this.trailLines.add(ghost);
     this.showTrails = false;
 
     // Selection marker.
+    {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const x = c.getContext('2d');
+      const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+      g.addColorStop(0, 'rgba(255,255,255,0.95)');
+      g.addColorStop(0.5, 'rgba(255,255,255,0.8)');
+      g.addColorStop(0.62, 'rgba(255,255,255,0.35)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = g;
+      x.fillRect(0, 0, 64, 64);
+      const disc = new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2);
+      this.halos = new THREE.InstancedMesh(disc, new THREE.MeshBasicMaterial({
+        map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, depthTest: false,
+      }), 800);
+      this.halos.renderOrder = 4;
+      this.halos.frustumCulled = false;
+      this.halos.count = 0;
+      S.add(this.halos);
+    }
     this.selRing = new THREE.Mesh(new THREE.RingGeometry(2.4, 3.1, 32), new THREE.MeshBasicMaterial({ color: COLORS.select, side: THREE.DoubleSide, depthTest: false, transparent: true }));
     this.selRing.rotation.x = -Math.PI / 2;
     this.selRing.renderOrder = 5;
@@ -502,8 +987,9 @@ export class View {
     S.add(this.selOutline);
 
     this.geo = {
-      body: new THREE.CylinderGeometry(0.55, 0.75, 3.1, 10),
-      head: new THREE.SphereGeometry(0.62, 12, 10),
+      torso: new THREE.CapsuleGeometry(0.55, 1.15, 3, 8),
+      head: new THREE.SphereGeometry(0.41, 12, 8),
+      limb: new THREE.CapsuleGeometry(0.24, 1.63, 2, 6),
       dogBody: new THREE.BoxGeometry(2, 0.9, 0.85),
       dogHead: new THREE.BoxGeometry(0.75, 0.7, 0.7),
       litter: new THREE.IcosahedronGeometry(0.6, 0),
@@ -513,6 +999,7 @@ export class View {
     };
     this.mats = {
       skin: new THREE.MeshLambertMaterial({ color: COLORS.skin }),
+      trousers: new THREE.MeshLambertMaterial({ color: '#263647' }),
       dog: new THREE.MeshLambertMaterial({ color: COLORS.dog }),
       activity: Object.fromEntries(['walking', 'standing', 'sitting', 'boating'].map((a) => [a, new THREE.MeshLambertMaterial({ color: COLORS[a] })])),
       litter: COLORS.litter.map((c) => new THREE.MeshBasicMaterial({ color: c })),
@@ -523,12 +1010,20 @@ export class View {
 
   makePerson() {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(this.geo.body, this.mats.activity.walking);
-    body.position.y = 1.55;
+    const body = new THREE.Mesh(this.geo.torso, this.mats.activity.walking);
     const head = new THREE.Mesh(this.geo.head, this.mats.skin);
-    head.position.y = 3.6;
-    g.add(body, head);
-    g.userData.body = body; g.userData.head = head; g.userData.base = 2.1;
+    head.scale.y = 1.15;
+    const arms = [], legs = [];
+    for (const side of [-1, 1]) {
+      const arm = new THREE.Mesh(this.geo.limb, this.mats.activity.walking);
+      arm.scale.set(0.84, 0.93, 0.84);
+      arm.rotation.x = side * 0.1;
+      const leg = new THREE.Mesh(this.geo.limb, this.mats.trousers);
+      legs.push(leg);
+      arms.push(arm);
+    }
+    g.add(body, head, ...arms, ...legs);
+    Object.assign(g.userData, { body, head, arms, legs, base: 1 });
     return g;
   }
   makeDog() {
@@ -538,7 +1033,7 @@ export class View {
     const tail = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.15, 0.15), this.mats.dog); tail.position.set(-1.2, 1.4, 0); tail.rotation.z = 0.6;
     const legs = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.6, 0.6), this.mats.dog); legs.position.y = 0.3;
     g.add(body, head, tail, legs);
-    g.userData.base = 1.9;
+    g.userData.base = 1.15;
     return g;
   }
   makeBoat() {
@@ -583,7 +1078,7 @@ export class View {
     bar.position.y = 4.2;
     g.add(bar);
     g.userData.battery = bar;
-    g.userData.base = 1.8;
+    g.userData.base = 1.1;
     return g;
   }
 
@@ -620,11 +1115,19 @@ export class View {
     const m = this.model;
     const rain = m.weather.rainIntensity;
     const camDist = this.camera.position.distanceTo(this.controls.target);
-    this.entityScale = Math.min(7, Math.max(1, camDist / 260));
+    this.entityScale = THREE.MathUtils.clamp(1 + (camDist - 300) / 3300, 1, 1.85);
     const wet = rain === 'heavy' ? 1 : rain === 'light' ? 0.5 : 0;
-    this.scene.background.copy(this.sky.dry).lerp(this.sky.wet, wet);
+    this.scene.background.copy(this.night ? this.sky.night : this.sky.dry);
+    if (!this.night) this.scene.background.lerp(this.sky.wet, wet);
     this.scene.fog.color.copy(this.scene.background);
-    this.sun.intensity = 1.7 - wet * 0.8;
+    this.sun.intensity = this.night ? 0.36 - wet * 0.1 : 2.15 - wet * 1.15;
+    this.hemi.intensity = this.night ? 0.8 : 1.5;
+    this.hemi.color.set(this.night ? '#a3bcf3' : '#e1efff');
+    this.hemi.groundColor.set(this.night ? '#35434c' : '#8b7c50');
+    this.pathMaterial.emissiveIntensity = this.night ? 0.38 : 0;
+    this.lakeWater.material.emissive.set(this.night ? '#155073' : '#000000');
+    this.pathLights.visible = this.night;
+    this.lakeTime.value = (this.lakeTime.value + dt) % 10000;
 
     // Lawns: grass color by height, brown wear patches, hatching for closed/reseeding.
     const short = c3(COLORS.grassShort), tall = c3(COLORS.grassTall);
@@ -647,9 +1150,11 @@ export class View {
       if (l.status === 'reseeding') badges.push(l.pendingReseed ? 'Closing to reseed' : `Reseeding · ${l.reseedTimer}m`);
       if (l.wear > RULES.NEEDS_RESEEDING && l.status !== 'reseeding') badges.push('Reseed');
       if (l.grassHeight > RULES.NEEDS_MOWING && l.status !== 'reseeding') badges.push('Mow');
-      const el = mesh.userData.badge.element;
-      el.textContent = badges.join(' · ');
-      el.style.display = badges.length ? '' : 'none';
+      // CSS2DRenderer sets display from visible each frame, so an empty badge
+      // must be hidden through visible (it was showing as a small yellow bar).
+      const badge = mesh.userData.badge;
+      badge.element.textContent = badges.join(' · ');
+      badge.visible = badges.length > 0;
     }
     const wu = this.regionMeshes.woods.material.userData.u;
     wu.uAmount.value = 0.08 + (m.woods.weedCover / 100) * 0.9;
@@ -665,13 +1170,14 @@ export class View {
     this.lakeWater.position.y += (wy - this.lakeWater.position.y) * (1 - Math.exp(-dt * 6));
     const lakeY = this.lakeWater.position.y;
 
-    // Duckweed: each cell is a green tile sized by its cover.
+    // Duckweed: each cell is drawn as a patch sized by its cover.
     const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), P = new THREE.Vector3();
     const cells = m.layout.grid.cells;
     for (let i = 0; i < cells.length; i++) {
       const v = m.duckweed[i];
-      const s = v < 1 ? 0.0001 : 0.12 + 0.9 * Math.sqrt(v / 100);
-      M4.compose(P.set(cells[i].x, lakeY + 0.05, -cells[i].y), Q, V.set(s, 1, s));
+      const s = v < 1 ? 0.0001 : 0.15 + 0.85 * Math.sqrt(v / 100);
+      const [dx, dz, q, stretch] = this.duckOffsets[i];
+      M4.compose(P.set(cells[i].x + dx, lakeY + 0.05, -cells[i].y + dz), q, V.set(s * stretch, 1, s / stretch));
       this.duck.setMatrixAt(i, M4);
     }
     this.duck.instanceMatrix.needsUpdate = true;
@@ -696,13 +1202,19 @@ export class View {
     const topOf = (loc) => REGION_TOP[m.byId[loc]?.kind] ?? 0.6;
     add(this.syncEntities(m.boats, () => this.makeBoat(), (b, o, d) => this.ease(o, w(b.x, b.y, lakeY + 0.3), d, b.heading), dt));
     add(this.syncEntities(m.people, () => this.makePerson(), (p, o, d) => {
-      const body = o.userData.body;
+      const { body, head, arms, legs } = o.userData;
       body.material = this.mats.activity[p.activity];
       const sit = p.activity === 'sitting' || p.activity === 'boating';
-      body.scale.y = sit ? 0.55 : 1;
-      body.position.y = sit ? 0.85 : 1.55;
-      o.userData.head.position.y = sit ? 2.3 : 3.6;
-      let x = p.x, y = p.y, h = topOf(p.location), heading;
+      body.position.y = sit ? 2.32 : 3.63;
+      head.position.y = sit ? 3.79 : 5.1;
+      for (const [i, side] of [-1, 1].entries()) {
+        arms[i].material = body.material;
+        arms[i].position.set(sit ? 0.38 : 0, sit ? 2.25 : 3.62, side * 0.7);
+        arms[i].rotation.z = sit ? -0.45 : 0;
+        legs[i].position.set(sit ? 0.83 : 0, sit ? 1.15 : 1.46, side * 0.3);
+        legs[i].rotation.z = sit ? -Math.PI * 0.42 : 0;
+      }
+      let x = p.x, y = p.y, h = topOf(p.location), heading = p.heading;
       if (p.activity === 'boating') {
         const b = m.boat(p.boatId);
         if (b) {
@@ -712,11 +1224,25 @@ export class View {
         }
       }
       this.ease(o, w(x, y, h), d, heading);
+
+      // Keep a short display history by simulation minute, independent of camera movement.
+      let trail = this.visitorTrails.get(p);
+      if (!trail) { trail = []; this.visitorTrails.set(p, trail); }
+      if (trail.at(-1)?.time !== m.time) {
+        trail.push({ x, y, h: h + 0.6 + ground(x, y), time: m.time });
+        if (trail.length > 45) trail.shift();
+      }
     }, dt));
     add(this.syncEntities(m.dogs, () => this.makeDog(), (dg, o, d) => {
+      // Drawn walking beside its owner, facing the same way; the model's
+      // own dog position (for poop, digging) is unchanged.
       const own = m.person(dg.ownerId);
-      const hd = own ? Math.atan2(own.y - dg.y, own.x - dg.x) : 0;
-      this.ease(o, w(dg.x, dg.y, topOf(dg.location)), d, hd);
+      if (!own) { this.ease(o, w(dg.x, dg.y, topOf(dg.location)), d, 0); return; }
+      const mv = own.prev ? Math.hypot(own.x - own.prev.x, own.y - own.prev.y) : 0;
+      if (mv > 0.1) o.userData.walkHd = Math.atan2(own.y - own.prev.y, own.x - own.prev.x);
+      const hd = o.userData.walkHd ?? 0, side = parseInt(dg.id.slice(1), 10) % 2 ? 1 : -1;
+      const x = own.x - Math.sin(hd) * 3.4 * side - Math.cos(hd) * 0.6, y = own.y + Math.cos(hd) * 3.4 * side - Math.sin(hd) * 0.6;
+      this.ease(o, w(x, y, topOf(own.location)), d, hd);
     }, dt));
     add(this.syncEntities(m.litter, (l) => {
       let o;
@@ -750,26 +1276,54 @@ export class View {
         bar.scale.x = Math.max(0.05, r.battery / 100) * 3;
         bar.material.color.setHSL((r.battery / 100) * 0.33, 0.8, 0.45);
         bar.rotation.y = -o.rotation.y;
+        bar.visible = selection?.id === r.id || this.showTrails;
       }, dt));
     }
     for (const [id, o] of this.meshes) if (!alive.has(id)) { this.scene.remove(o); this.meshes.delete(id); }
 
-    this.updateLines(lakeY);
+    this.updateHalos(camDist);
+    this.labelClock = (this.labelClock || 0) + dt;
+    if (this.labelClock > 0.15) { this.labelClock = 0; this.declutterLabels(); }
+    this.updateLines(lakeY, selection);
     this.updateTrails(lakeY);
     this.updateScreen(dt);
     this.knowledge.update(dt, selection, this.entityScale);
     this.updateSelection(selection, lakeY);
   }
 
-  updateLines(lakeY) {
-    const m = this.model, s = this.entityScale;
+  // Halos grow with camera distance (about 12 px on screen) and fade out up
+  // close, where the figures themselves are readable.
+  updateHalos(camDist) {
+    const m = this.model;
+    const radius = THREE.MathUtils.clamp(camDist * 0.005, 1.6, 18);
+    const fade = THREE.MathUtils.clamp((camDist - 260) / 500, 0, 1);
+    this.halos.material.opacity = 0.25 + 0.65 * fade;
+    const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(radius, 1, radius), P = new THREE.Vector3();
+    const visitor = c3(HALO_COLORS.visitor), robot = c3(HALO_COLORS.robot);
+    let n = 0;
+    const put = (id, color) => {
+      const o = this.meshes.get(id);
+      if (!o || n >= this.halos.instanceMatrix.count) return;
+      M4.compose(P.set(o.position.x, o.position.y + 0.3, o.position.z), Q, V);
+      this.halos.setMatrixAt(n, M4);
+      this.halos.setColorAt(n++, color);
+    };
+    for (const p of m.people) put(p.id, visitor);
+    for (const list of [m.mowers, m.stewards, m.skimmers]) for (const r of list) put(r.id, robot);
+    this.halos.count = n;
+    this.halos.instanceMatrix.needsUpdate = true;
+    if (this.halos.instanceColor) this.halos.instanceColor.needsUpdate = true;
+  }
+
+  updateLines(lakeY, selection) {
+    const m = this.model;
     // Leashes: owner's hand to dog's collar, using the eased mesh positions.
     let k = 0;
     const la = this.leashes.geometry.attributes.position.array;
     for (const d of m.dogs) {
       const om = this.meshes.get(d.ownerId), dm = this.meshes.get(d.id);
       if (!om || !dm) continue;
-      la.set([om.position.x, om.position.y + 2.6 * om.scale.y, om.position.z, dm.position.x, dm.position.y + 1.6 * dm.scale.y, dm.position.z], k); k += 6;
+      la.set([om.position.x, om.position.y + 2.8 * om.scale.y, om.position.z, dm.position.x, dm.position.y + 1.6 * dm.scale.y, dm.position.z], k); k += 6;
     }
     this.leashes.geometry.setDrawRange(0, k / 3);
     this.leashes.geometry.attributes.position.needsUpdate = true;
@@ -797,11 +1351,12 @@ export class View {
     const ta = this.targets.geometry.attributes.position.array, tc = this.targets.geometry.attributes.color.array;
     const col = new THREE.Color();
     for (const r of m.robots()) {
+      if (this.night && selection?.id !== r.id) continue;
       const rm = this.meshes.get(r.id);
       const tp = this.targetPoint(r, lakeY);
       if (!rm || !tp) continue;
       col.set(COLORS[r.kind]);
-      ta.set([rm.position.x, rm.position.y + 3 * s, rm.position.z, tp.x, tp.y, tp.z], k);
+      ta.set([rm.position.x, rm.position.y + 2 * rm.scale.y, rm.position.z, tp.x, tp.y, tp.z], k);
       tc.set([col.r, col.g, col.b, col.r, col.g, col.b], k); k += 6;
     }
     this.targets.geometry.setDrawRange(0, k / 3);
@@ -888,7 +1443,14 @@ export class View {
   }
 
   render() {
+    this.stepCamera();
     this.controls.update();
+    // Keep the camera above the model: the target stays at or above the lake
+    // surface and the eye stays clear of the ground under it.
+    const cam = this.camera.position, tgt = this.controls.target;
+    if (tgt.y < 0) tgt.y = 0;
+    const floor = Math.max(0, ground(cam.x, -cam.z)) + (this.follow ? 6 : 15);
+    if (cam.y < floor) { cam.y = floor; this.camera.lookAt(tgt); }
     this.renderer.render(this.scene, this.camera);
     this.labels.render(this.scene, this.camera);
   }

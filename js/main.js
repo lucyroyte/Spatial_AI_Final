@@ -35,8 +35,19 @@ function toast(msg, ok = false) {
 
 function selected() { return selection ? model.get(selection.id) : null; }
 
+// Click selects. Double-click (or the panel's Zoom in, or Z) on someone or
+// something that moves flies the camera down to it and follows it; clearing
+// the selection flies back to where you were.
+const FLY_DIST = { person: 30, dog: 24, boat: 44, mower: 38, steward: 34, skimmer: 40 };
+function zoomIn() {
+  if (!selection || !FLY_DIST[selection.kind]) return;
+  view.flyTo(selection.id, FLY_DIST[selection.kind]);
+  renderInspector();
+}
 function select(ref) {
   selection = ref && model.get(ref.id) ? ref : null;
+  if (!selection) view.flyBack();
+  else if (view.follow && view.follow.id !== selection.id) view.follow = null;
   renderInspector();
   updateButtons();
 }
@@ -82,7 +93,7 @@ function describe(e) {
   if (k === 'lawn') {
     const people = model.peopleIn(e.id).length, dogs = model.dogsIn(e.id).length;
     rows.push(['Grass height', inches(e.grassHeight)], ['Wear', `${fmt(e.wear)}%`], ['Area', `${Math.round(e.area).toLocaleString()} sq ft`],
-      ['Elevation', e.elevation], ['Standing water', inches(e.standingWater)], ['Status', e.status + (e.status === 'reseeding' && !e.pendingReseed ? ` (${e.reseedTimer} steps left)` : '')],
+      ['Elevation', Number.isFinite(e.elevationFt) ? `${e.elevation} · ${Math.round(e.elevationFt)} ft` : e.elevation], ['Standing water', inches(e.standingWater)], ['Status', e.status + (e.status === 'reseeding' && !e.pendingReseed ? ` (${e.reseedTimer} steps left)` : '')],
       ['People / dogs', `${people} / ${dogs} (max ${model.lawnCapacity(e)} people)`], ['Boundary', `${e.boundary.length}-point polygon`]);
     if (e.grassHeight > RULES.NEEDS_MOWING) flags.push(['Needs mowing']);
     if (e.wear > RULES.NEEDS_RESEEDING) flags.push(['Needs reseeding', true]);
@@ -93,7 +104,7 @@ function describe(e) {
     return { title: e.name, rows, flags };
   }
   if (k === 'path') {
-    rows.push(['Width', `${e.width} ft`], ['Elevation', e.elevation], ['Standing water', inches(e.standingWater)], ['Boundary', `${e.boundary.length}-point polygon`],
+    rows.push(['Width', `${e.width} ft`], ['Elevation', Number.isFinite(e.elevationFt) ? `${e.elevation} · ${Math.round(e.elevationFt)} ft` : e.elevation], ['Standing water', inches(e.standingWater)], ['Boundary', `${e.boundary.length}-point polygon`],
       ['Borders', [...model.layout.adj[e.id]].map(regionName).join(', ')]);
     if (e.overflow) flags.push(['Flooded by lake overflow', true]);
     else if (e.standingWater > RULES.PERSON_MAX_WATER) flags.push(['Over 3″ of water: closed to people', true]);
@@ -187,6 +198,9 @@ function renderInspector() {
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   $('insp-body').innerHTML = `<table>${d.rows.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join('')}</table>` +
     d.flags.map(([t, bad]) => `<span class="flag${bad ? ' bad' : ''}">${esc(t)}</span>`).join('') +
+    (FLY_DIST[e.kind] ? (view.follow?.id === e.id
+      ? '<button class="know-btn" data-zoom="out">Zoom back out (Esc)</button>'
+      : '<button class="know-btn" data-zoom="in">Zoom in and follow (double-click)</button>') : '') +
     (e.mind ? `<button class="know-btn${view.knowledge.mode === 'agent' ? ' on' : ''}" data-know>${view.knowledge.mode === 'agent' ? 'Hide what they know' : 'Show what they know'}</button>` : '');
 }
 
@@ -202,7 +216,7 @@ function renderStatus() {
   const bar = $('st-lake-bar');
   bar.style.width = `${Math.max(0, Math.min(100, ((lvl + 10) / 24) * 100))}%`;
   bar.classList.toggle('over', lvl > 0);
-  $('st-step').textContent = `Day ${model.day.number} · ${model.clock()}`;
+  $('st-step').textContent = $('tb-clock').textContent = `Day ${model.day.number} · ${model.clock()}`;
   $('st-duck').textContent = `Duckweed ${fmt(model.duckweedCover(), 0)}%`;
   $('st-weed').textContent = `Weeds ${fmt(model.woods.weedCover, 0)}%`;
   $('btn-rain').textContent = `Rain: ${rain}`;
@@ -242,12 +256,20 @@ function renderVisitors() {
 }
 
 let treesBeforeOverlay = null;
+let lastPerception = null;
 function setOverlay(mode) {
   view.knowledge.setMode(mode);
   // Maps read better from above without the tree canopy.
   if (mode !== 'off' && treesBeforeOverlay === null) { treesBeforeOverlay = view.trees.visible; view.setTreesVisible(false); }
   if (mode === 'off' && treesBeforeOverlay !== null) { view.setTreesVisible(treesBeforeOverlay); treesBeforeOverlay = null; }
   $('btn-trees').classList.toggle('on', view.trees.visible);
+  const perceiving = mode !== 'off';
+  $('stage-explore').classList.toggle('on', !perceiving);
+  $('stage-perceive').classList.toggle('on', perceiving);
+  $('stage-explore').setAttribute('aria-pressed', String(!perceiving));
+  $('stage-perceive').setAttribute('aria-pressed', String(perceiving));
+  $('perceive-controls').hidden = !perceiving;
+  if (perceiving) lastPerception = mode;
   $('overlay').value = mode;
   $('overlay-key').innerHTML = {
     agent: `Dark: unknown to them · <i style="background:#dc3c3c"></i>blocked · <i style="background:#3c82eb"></i>water · <i style="background:#ffe65a"></i>in view now. Pins are their landmarks: ${Object.entries(LANDMARK_COLORS).map(([k, c]) => `<i style="background:${c}"></i>${k}`).join(' ')}. An × marks another agent where they last saw it.`,
@@ -297,7 +319,7 @@ function run(action) {
     case 'play':
       if (playing) { clearInterval(playing); playing = null; }
       else playing = setInterval(advance, 140);
-      $('btn-play').textContent = playing ? 'Pause' : 'Play';
+      $('btn-play').textContent = playing ? '❚❚ Pause' : '▶ Play';
       $('btn-play').classList.toggle('on', !!playing);
       break;
     case 'fast':
@@ -319,10 +341,13 @@ function run(action) {
   renderInspector();
 }
 
-document.querySelectorAll('#toolbar [data-action]').forEach((b) => b.addEventListener('click', () => run(b.dataset.action)));
+document.querySelectorAll('#toolbar [data-action], #timebar [data-action]').forEach((b) => b.addEventListener('click', () => run(b.dataset.action)));
 $('insp-close').addEventListener('click', () => select(null));
 $('insp-body').addEventListener('click', (ev) => {
   if (ev.target.closest('[data-know]')) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent');
+  const z = ev.target.closest('[data-zoom]');
+  if (z && z.dataset.zoom === 'in') zoomIn();
+  else if (z) { view.flyBack(); renderInspector(); }
 });
 $('insp-actions').addEventListener('click', (ev) => { const b = ev.target.closest('[data-act]'); if (b) run(b.dataset.act); });
 
@@ -344,6 +369,12 @@ const designer = setupDesigner({
   },
 });
 $('overlay').innerHTML = Object.entries(OVERLAYS).map(([k, t]) => `<option value="${k}">${t}</option>`).join('');
+$('stage-explore').addEventListener('click', () => setOverlay('off'));
+$('stage-perceive').addEventListener('click', () => setOverlay(lastPerception || (selected()?.mind ? 'agent' : 'shared')));
+$('scene-preset').addEventListener('change', (ev) => {
+  if (ev.target.value !== 'overview') setOverlay('off');
+  view.setScenePreset(ev.target.value);
+});
 $('overlay').addEventListener('change', (ev) => setOverlay(ev.target.value));
 
 // ---------- robot center monitor ----------
@@ -402,8 +433,14 @@ canvas.addEventListener('pointerup', (ev) => {
   select(ref);
   if (ref && ref.monitor) setMonitor(true);
 });
+canvas.addEventListener('dblclick', (ev) => {
+  const ref = view.pick(ev.clientX, ev.clientY);
+  if (!ref || !FLY_DIST[ref.kind]) return;
+  select(ref);
+  zoomIn();
+});
 window.addEventListener('keydown', (ev) => {
-  if (ev.target.tagName === 'INPUT') return;
+  if (ev.target.matches('input, select, button, summary') && ev.key !== 'Escape') return;
   if (ev.key === 'f' && selected()) { const e = selected(); const p = e.anchor || e.position || e; view.focus(p.x, p.y); }
   if (ev.key === ' ') { ev.preventDefault(); run('play'); }
   if (ev.key === 'Escape') {
@@ -413,6 +450,7 @@ window.addEventListener('keydown', (ev) => {
     else select(null);
   }
   if (ev.key === 'm') run('monitor');
+  if (ev.key === 'z') zoomIn();
   if (ev.key === 'k' && selected()?.mind) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent');
 });
 
@@ -428,7 +466,7 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 renderStatus(); renderLog(); updateButtons();
-if (window.innerWidth > 760) $('legend').querySelector('details').open = true;
+renderInspector();
 
 $('loading').remove();
 requestAnimationFrame(frame);

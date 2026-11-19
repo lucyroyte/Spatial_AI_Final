@@ -215,6 +215,7 @@ export function setupDesigner({ model, openInPark, toast }) {
   function open(show = true) {
     $('designer').hidden = !show;
     $('btn-design').classList.toggle('on', show);
+    $('btn-design').setAttribute('aria-expanded', String(show));
     if (show && !round && !busy) newRound();
   }
   $('btn-design').addEventListener('click', () => open($('designer').hidden));

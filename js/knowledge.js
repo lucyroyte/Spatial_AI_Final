@@ -4,7 +4,9 @@ import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { K } from './mind.js';
 
-const w = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+// Ground height (display ft) under a model point; the view passes its terrain in.
+let ground = () => 0;
+const w = (x, y, h = 0) => new THREE.Vector3(x, h + ground(x, y), -y);
 
 export const OVERLAYS = {
   off: 'No overlay',
@@ -18,7 +20,7 @@ export const OVERLAYS = {
 export const LANDMARK_COLORS = {
   start: '#ffffff', place: '#22c55e', hindrance: '#ef4444', issue: '#f97316', affordance: '#facc15', patrol: '#a78bfa',
 };
-const OTHER_COLORS = { person: '#38bdf8', dog: '#a16207', mower: '#f59e0b', steward: '#8b5cf6', skimmer: '#06b6d4', boat: '#e5e7eb' };
+const OTHER_COLORS = { person: '#38bdf8', dog: '#a16207', mower: '#f59e0b', steward: '#ff903d', skimmer: '#ffbd78', boat: '#e5e7eb' };
 
 // Color ramps for the heatmaps, from 0..1.
 const ramp = (stops) => (t) => {
@@ -32,7 +34,8 @@ const MARKS = ramp([[158, 154, 200], [128, 90, 190], [106, 30, 150], [60, 0, 90]
 const SHARE = ramp([[65, 182, 196], [29, 145, 192], [34, 94, 168], [12, 44, 132]]);
 
 export class KnowledgeLayer {
-  constructor(scene, model) {
+  constructor(scene, model, groundAt) {
+    if (groundAt) ground = groundAt;
     this.scene = scene;
     this.model = model;
     this.mode = 'off';
@@ -40,14 +43,18 @@ export class KnowledgeLayer {
     this.cols = fm.cols; this.rows = fm.rows;
     this.data = new Uint8Array(this.cols * this.rows * 4);
     this.tex = new THREE.DataTexture(this.data, this.cols, this.rows, THREE.RGBAFormat);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
     this.tex.magFilter = THREE.LinearFilter;
     this.tex.needsUpdate = true;
     const W = this.cols * L.cell * 2, H = this.rows * L.cell * 2;
-    this.plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(W, H).rotateX(-Math.PI / 2),
+    // A grid draped over the terrain, so the overlay sits on the hills.
+    const sheet = new THREE.PlaneGeometry(W, H, Math.ceil(W / 20), Math.ceil(H / 20)).rotateX(-Math.PI / 2);
+    const cx = L.x0 + W / 2, cy = L.y0 + H / 2, sp = sheet.attributes.position;
+    for (let i = 0; i < sp.count; i++) sp.setY(i, ground(cx + sp.getX(i), cy - sp.getZ(i)));
+    this.plane = new THREE.Mesh(sheet,
       new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false, depthTest: false }),
     );
-    this.plane.position.copy(w(L.x0 + W / 2, L.y0 + H / 2, 2.5));
+    this.plane.position.copy(new THREE.Vector3(cx, 2.5, -cy));
     this.plane.renderOrder = 2;
     this.plane.visible = false;
     scene.add(this.plane);
@@ -62,7 +69,15 @@ export class KnowledgeLayer {
       scene.add(l);
       return l;
     };
-    this.cone = lines(80, { opacity: 0.95 });
+    this.cone = lines(80, { opacity: 1 });
+    const sector = new THREE.BufferGeometry();
+    sector.setAttribute('position', new THREE.BufferAttribute(new Float32Array(24 * 9), 3));
+    this.coneFill = new THREE.Mesh(sector, new THREE.MeshBasicMaterial({
+      transparent: true, opacity: 0.23, depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+    }));
+    this.coneFill.frustumCulled = false;
+    this.coneFill.renderOrder = 3;
+    scene.add(this.coneFill);
     this.pins = lines(400);
     this.route = lines(1200, { opacity: 0.8 });
     this.labels = [];
@@ -117,7 +132,7 @@ export class KnowledgeLayer {
     this.t += dt;
     const key = `${this.mode}|${agent ? agent.id : ''}`;
     if (key !== this.lastKey || this.t > 0.4) { this.t = 0; this.lastKey = key; this.paint(agent); }
-    this.drawCone(agent, scale);
+    this.drawCone(agent);
     this.drawAgentExtras(this.mode === 'agent' ? agent : null, scale);
     const up = new Set(this.model.signposts.map((sp) => sp.id));
     this.signs.children.forEach((g) => { g.visible = up.has(g.userData.ref.id); g.scale.setScalar(Math.min(3, scale)); });
@@ -184,18 +199,26 @@ export class KnowledgeLayer {
   }
 
   // The selected agent's cone of vision.
-  drawCone(agent, scale) {
+  drawCone(agent) {
     const g = this.cone.geometry, pa = g.attributes.position.array, ca = g.attributes.color.array;
     let k = 0;
     const cone = agent && agent.mind.cone;
-    if (cone && this.model.time - cone.t <= 3) {
-      const h = 3, fov = (cone.fov * Math.PI) / 180, n = 24, col = new THREE.Color('#fde047');
-      const pt = (a) => [agent.x + Math.cos(a) * cone.range, h, -(agent.y + Math.sin(a) * cone.range)];
+    this.coneFill.visible = !!cone && this.model.time - cone.t <= 3;
+    if (this.coneFill.visible) {
+      const h = 3, fov = (cone.fov * Math.PI) / 180, n = 24, col = new THREE.Color(agent.kind === 'person' ? '#9ee7ff' : '#ffd090');
+      const pt = (a) => { const x = agent.x + Math.cos(a) * cone.range, y = agent.y + Math.sin(a) * cone.range; return [x, h + ground(x, y), -y]; };
       const a0 = cone.fov >= 360 ? 0 : cone.heading - fov / 2, span = cone.fov >= 360 ? Math.PI * 2 : fov;
       const seg = (p, q) => { pa.set([...p, ...q], k); ca.set([col.r, col.g, col.b, col.r, col.g, col.b], k); k += 6; };
-      const o = [agent.x, h, -agent.y];
+      const o = [agent.x, h + ground(agent.x, agent.y), -agent.y];
       if (cone.fov < 360) { seg(o, pt(a0)); seg(o, pt(a0 + span)); }
-      for (let i = 0; i < n; i++) seg(pt(a0 + (span * i) / n), pt(a0 + (span * (i + 1)) / n));
+      const fill = this.coneFill.geometry.attributes.position;
+      this.coneFill.material.color.copy(col);
+      for (let i = 0; i < n; i++) {
+        const start = pt(a0 + (span * i) / n), end = pt(a0 + (span * (i + 1)) / n);
+        seg(start, end);
+        fill.array.set([...o, ...start, ...end], i * 9);
+      }
+      fill.needsUpdate = true;
     }
     g.setDrawRange(0, k / 3);
     g.attributes.position.needsUpdate = true;
@@ -210,7 +233,7 @@ export class KnowledgeLayer {
     const seg = (x1, y1, h1, x2, y2, h2, c) => {
       if (k + 6 > pa.length) return;
       col.set(c);
-      pa.set([x1, h1, -y1, x2, h2, -y2], k); pc.set([col.r, col.g, col.b, col.r, col.g, col.b], k); k += 6;
+      pa.set([x1, h1 + ground(x1, y1), -y1, x2, h2 + ground(x2, y2), -y2], k); pc.set([col.r, col.g, col.b, col.r, col.g, col.b], k); k += 6;
     };
     if (agent) {
       const s = Math.min(4, scale), lms = agent.mind.landmarks;
@@ -245,11 +268,13 @@ export class KnowledgeLayer {
     const rg = this.route.geometry, ra = rg.attributes.position.array, rc = rg.attributes.color.array;
     k = 0;
     if (agent && agent.route && agent.route.length) {
-      col.set('#fde047');
+      col.set('#fff395');
       let prev = agent;
       for (let i = 0; i < agent.route.length && k + 6 <= ra.length; i += 1) {
         const q = agent.route[i];
-        if (i % 2 === 0) { ra.set([prev.x, 2.2, -prev.y, q.x, 2.2, -q.y], k); rc.set([col.r, col.g, col.b, col.r, col.g, col.b], k); k += 6; }
+        ra.set([prev.x, 2.2 + ground(prev.x, prev.y), -prev.y, q.x, 2.2 + ground(q.x, q.y), -q.y], k);
+        rc.set([col.r, col.g, col.b, col.r, col.g, col.b], k);
+        k += 6;
         prev = q;
       }
     }
