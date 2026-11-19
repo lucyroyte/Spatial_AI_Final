@@ -26,6 +26,13 @@
       <button id="btn-design" class="primary" aria-controls="designer" aria-expanded="false" title="Generate, compare and evolve park layouts">Evolve</button>
     </nav>
     <label class="overlay" id="perceive-controls" hidden>Overlay <select id="overlay"></select></label>
+    <label class="overlay">View
+      <select id="scene-preset">
+        <option value="overview">Day overview</option>
+        <option value="lakeside">Day lakeside</option>
+        <option value="night">Night trails</option>
+      </select>
+    </label>
     <div class="group time-tools" aria-label="Simulation time">
       <button data-action="play" id="btn-play" title="Run time continuously (Space)">Play</button>
       <button data-action="advance" title="Advance one time step (one minute)">Step</button>

@@ -354,6 +354,10 @@ const designer = setupDesigner({
 $('overlay').innerHTML = Object.entries(OVERLAYS).map(([k, t]) => `<option value="${k}">${t}</option>`).join('');
 $('stage-explore').addEventListener('click', () => setOverlay('off'));
 $('stage-perceive').addEventListener('click', () => setOverlay(lastPerception || (selected()?.mind ? 'agent' : 'shared')));
+$('scene-preset').addEventListener('change', (ev) => {
+  if (ev.target.value !== 'overview') setOverlay('off');
+  view.setScenePreset(ev.target.value);
+});
 $('overlay').addEventListener('change', (ev) => setOverlay(ev.target.value));
 
 // ---------- robot center monitor ----------

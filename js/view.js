@@ -1,6 +1,6 @@
 // three.js rendering of the model. Ground plane (x east, y north, feet)
 // maps to world (x, height, -y). The map is about 2,600 by 2,400 ft, so
-// people, dogs and robots are drawn larger as the camera pulls back.
+// agents are built in feet, with a small readability allowance at overview scale.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
@@ -59,7 +59,7 @@ function patchMaterial() {
 // World-space ripples stay continuous across the original lake polygons.
 function lakeMaterial(time) {
   const material = new THREE.MeshPhongMaterial({
-    color: COLORS.water, shininess: 64, specular: '#a5c5b8',
+    color: COLORS.water, shininess: 80, specular: '#72948b',
   });
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uLakeTime = time;
@@ -130,7 +130,7 @@ export class View {
     container.appendChild(this.labels.domElement);
 
     this.scene = new THREE.Scene();
-    this.sky = { dry: c3('#e6ede5'), wet: c3('#adbcbf') };
+    this.sky = { dry: c3('#e6ede5'), wet: c3('#adbcbf'), night: c3('#171c25') };
     this.scene.background = this.sky.dry.clone();
     this.scene.fog = new THREE.Fog(this.scene.background, 2700, 6600);
 
@@ -160,6 +160,8 @@ export class View {
     this.meshes = new Map(); // entity id -> Object3D
     this.pickables = [];     // meshes for raycast picking (regions, fences)
     this.entityScale = 1;
+    this.night = false;
+    this.visitorTrails = new WeakMap();
     this.buildStatic();
     this.buildDynamicLayers();
     this.knowledge = new KnowledgeLayer(this.scene, model);
@@ -176,6 +178,25 @@ export class View {
     this.camera.lookAt(this.controls.target);
     this.camera.updateProjectionMatrix();
   }
+  setScenePreset(preset) {
+    this.night = preset === 'night';
+    this.fitCamera();
+    if (preset !== 'lakeside') return;
+
+    const { pathPoint, waterPoint } = this.model.layout.landing;
+    const target = w(pathPoint.x, pathPoint.y, 4);
+    const direction = w(waterPoint.x, waterPoint.y).sub(target);
+    direction.y = 0;
+    const up = this.camera.up;
+    direction.normalize().applyAxisAngle(up, -1.18);
+    target.addScaledVector(direction.clone().cross(up), 32);
+    const distance = Math.max(1, 1.05 / this.camera.aspect);
+    this.controls.target.copy(target);
+    this.camera.position.copy(target).addScaledVector(direction, 205 * distance);
+    this.camera.position.y += 100 * distance;
+    this.camera.lookAt(target);
+  }
+
   resize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
@@ -226,7 +247,8 @@ export class View {
 
     // Paths, lawns and the woods understory: one mesh per region.
     this.regionMeshes = {};
-    const pathMat = lam(COLORS.path);
+    const pathMat = this.pathMaterial = lam(COLORS.path);
+    pathMat.emissive.set('#ad713b');
     for (const p of L.paths) {
       const mesh = flatMesh(p.polygons, pathMat, REGION_TOP.path);
       mesh.userData.ref = { kind: 'path', id: p.id };
@@ -281,6 +303,37 @@ export class View {
     dock.rotation.y = Math.atan2(lp.waterPoint.x - lp.pathPoint.x, lp.waterPoint.y - lp.pathPoint.y);
     dock.userData.ref = { kind: 'landing', id: 'landing' };
     S.add(dock); this.pickables.push(dock);
+    dock.receiveShadow = true;
+
+    const deck = new THREE.Group();
+    deck.position.copy(dock.position);
+    deck.rotation.copy(dock.rotation);
+    const wood = lam('#806047');
+    const planks = Math.ceil(dockLen / 0.95);
+    const plank = new THREE.BoxGeometry(6.15, 0.16, dockLen / planks - 0.045);
+    for (let i = 0; i < planks; i++) {
+      const board = new THREE.Mesh(plank, wood);
+      board.position.set(0, 0.36, dockLen * ((i + 0.5) / planks - 0.5));
+      board.receiveShadow = true;
+      deck.add(board);
+    }
+    const railLength = dockLen * 0.67;
+    const rail = new THREE.BoxGeometry(0.19, 0.16, railLength);
+    const post = new THREE.BoxGeometry(0.27, 2.65, 0.27);
+    for (const x of [-2.85, 2.85]) {
+      const handrail = new THREE.Mesh(rail, wood);
+      handrail.position.set(x, 2.85, -dockLen / 2 + railLength / 2);
+      handrail.castShadow = true;
+      deck.add(handrail);
+      for (let i = 0; i <= 3; i++) {
+        const support = new THREE.Mesh(post, wood);
+        support.position.set(x, 1.57, -dockLen / 2 + railLength * i / 3);
+        support.castShadow = true;
+        deck.add(support);
+      }
+    }
+    S.add(deck);
+    this.buildShoreReeds(lp);
 
     // Robot center: a charging pad on the path and a floating dock for skimmers.
     const c = L.center;
@@ -294,6 +347,7 @@ export class View {
     fdock.userData.ref = { kind: 'center', id: 'center' };
     S.add(pad, ring, fdock); this.pickables.push(pad, fdock);
     this.buildCenterBuilding();
+    this.buildPathLights();
 
     // Labels for named places only.
     for (const r of [...L.lawns, L.woods, L.lake]) if (isNamed(r.name)) this.label(r.name, w(r.anchor.x, r.anchor.y, 3));
@@ -301,6 +355,70 @@ export class View {
     this.label('Boat landing', w(lp.pathPoint.x, lp.pathPoint.y - 12, 3), 'map-label small');
     this.label('Robot center', w(this.buildingPos.x, this.buildingPos.y, 26), 'map-label small');
     this.label('Skimmer dock', w(c.dock.x, c.dock.y - 16, 3), 'map-label small');
+  }
+
+  buildShoreReeds({ position }) {
+    const boundary = this.model.layout.lake.boundary;
+    const rand = G.mulberry32(467);
+    const vertices = [];
+    const colors = [];
+    const shades = ['#687342', '#9a9b56', '#b0a465'].map(c3);
+    for (const [i, a] of boundary.entries()) {
+      const b = boundary[(i + 1) % boundary.length];
+      const length = G.dist(a, b);
+      for (let offset = 1.5; offset < length; offset += 2.4) {
+        const x = THREE.MathUtils.lerp(a.x, b.x, offset / length);
+        const y = THREE.MathUtils.lerp(a.y, b.y, offset / length);
+        const distance = G.dist({ x, y }, position);
+        if (distance < 13 || distance > 110 || rand() < 0.42) continue;
+        for (let blade = 0; blade < 7; blade++) {
+          const angle = rand() * Math.PI * 2;
+          const dx = Math.cos(angle), dz = Math.sin(angle);
+          const width = 0.05 + rand() * 0.09;
+          const height = 0.8 + rand() * 3.1;
+          const lean = 0.35 + rand() * 0.9;
+          const bx = x + dx * rand(), bz = -y + dz * rand();
+          vertices.push(bx - dz * width, 0.12, bz + dx * width,
+            bx + dz * width, 0.12, bz - dx * width,
+            bx + dx * lean, height, bz + dz * lean);
+          const color = shades[Math.floor(rand() * shades.length)];
+          colors.push(color.r * 0.55, color.g * 0.55, color.b * 0.55,
+            color.r * 0.66, color.g * 0.66, color.b * 0.66, color.r, color.g, color.b);
+        }
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.computeVertexNormals();
+    this.scene.add(new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({
+      vertexColors: true, side: THREE.DoubleSide,
+    })));
+  }
+
+  buildPathLights() {
+    const positions = [];
+    for (const { anchor } of this.model.layout.paths) {
+      positions.push(anchor.x, 4.8, -anchor.y);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, 'rgba(255,255,255,1)');
+    gradient.addColorStop(0.12, 'rgba(255,255,255,0.85)');
+    gradient.addColorStop(0.45, 'rgba(255,255,255,0.22)');
+    gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    this.pathLights = new THREE.Points(geometry, new THREE.PointsMaterial({
+      color: '#ffc27a', size: 43, map: new THREE.CanvasTexture(canvas),
+      blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
+    }));
+    this.pathLights.visible = false;
+    this.scene.add(this.pathLights);
   }
 
   // The building stands next to the charging pad, on ground nobody walks on if possible.
@@ -381,7 +499,7 @@ export class View {
   updateTrails(lakeY) {
     const g = this.trailLines.geometry;
     let k = 0;
-    if (this.showTrails) {
+    if (this.showTrails || this.night) {
       const pa = g.attributes.position.array, ca = g.attributes.color.array, col = new THREE.Color(), max = pa.length;
       for (const r of this.model.robots()) {
         const tr = r.trail, h = r.kind === 'skimmer' ? lakeY + 0.4 : 1.6;
@@ -391,6 +509,20 @@ export class View {
           const f = 0.25 + 0.75 * (i / tr.length);
           ca.set([col.r * f, col.g * f, col.b * f, col.r * f, col.g * f, col.b * f], k);
           k += 6;
+        }
+      }
+      if (this.night) {
+        col.set('#71cfff');
+        for (const p of this.model.people) {
+          const trail = this.visitorTrails.get(p) || [];
+          for (let i = 1; i < trail.length && k + 6 <= max; i++) {
+            const start = trail[i - 1], end = trail[i];
+            if (Math.hypot(end.x - start.x, end.y - start.y) > 160) continue;
+            pa.set([start.x, start.h, -start.y, end.x, end.h, -end.y], k);
+            const fade = 0.28 + 0.72 * i / trail.length;
+            ca.set([col.r * fade, col.g * fade, col.b * fade, col.r * fade, col.g * fade, col.b * fade], k);
+            k += 6;
+          }
         }
       }
       g.attributes.position.needsUpdate = true;
@@ -407,13 +539,29 @@ export class View {
     const trunkGeo = new THREE.CylinderGeometry(0.45, 0.8, 1, 6);
     const crownGeo = new THREE.IcosahedronGeometry(1, 1);
     const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial({ color: '#69513b' }), trees.length);
-    const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshLambertMaterial({ flatShading: true }), trees.length * 4);
+    const foliage = new THREE.MeshLambertMaterial();
+    foliage.onBeforeCompile = (shader) => {
+      shader.vertexShader = 'varying vec3 vCanopy;\n' + shader.vertexShader.replace(
+        '#include <project_vertex>', 'vCanopy = (instanceMatrix * vec4(transformed, 1.0)).xyz;\n#include <project_vertex>',
+      );
+      shader.fragmentShader = 'varying vec3 vCanopy;\n' + NOISE +
+        shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+          vec2 leaf = vCanopy.xz + vCanopy.y * vec2(0.73, 1.3);
+          float grain = mix(noise(leaf * 0.58), 0.5, smoothstep(0.3, 2.5, length(fwidth(leaf))));
+          diffuseColor.rgb *= 0.8 + grain * 0.42;
+        `);
+    };
+    const crowns = new THREE.InstancedMesh(crownGeo, foliage, trees.length * 4);
+    const needles = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 9), foliage, Math.ceil(trees.length / 11) * 4);
+    needles.castShadow = true;
+    needles.receiveShadow = true;
+    let broadleafCount = 0, evergreenCount = 0;
     crowns.castShadow = true;
     crowns.receiveShadow = true;
     const matrix = new THREE.Matrix4(), rotation = new THREE.Quaternion();
     const size = new THREE.Vector3(), angles = new THREE.Euler();
     const greens = ['#31583a', '#3c693b', '#50743e', '#65834a', '#788e45'].map(c3);
-    const color = new THREE.Color();
+    const color = new THREE.Color(), upAxis = new THREE.Vector3(0, 1, 0);
     trees.forEach(([x, y, radius], i) => {
       const height = 15 + radius * (1.2 + rand() * 0.55);
       const spread = Math.max(5, radius * (0.68 + rand() * 0.22));
@@ -422,6 +570,17 @@ export class View {
       matrix.compose(w(x, y, height * 0.35), rotation, size.set(1.6, height * 0.7, 1.6));
       trunks.setMatrixAt(i, matrix);
       const bearing = rand() * Math.PI * 2;
+      if (i % 11 === 0) {
+        rotation.setFromAxisAngle(upAxis, bearing);
+        for (let tier = 0; tier < 4; tier++) {
+          const width = spread * (0.75 - tier * 0.13);
+          matrix.compose(w(x, y, height * (0.43 + tier * 0.19)),
+            rotation, size.set(width, height * 0.48, width));
+          needles.setMatrixAt(evergreenCount, matrix);
+          needles.setColorAt(evergreenCount++, color.set('#355345').offsetHSL(0, 0, tier * 0.029));
+        }
+        return;
+      }
       for (let lobe = 0; lobe < 4; lobe++) {
         const central = lobe === 0;
         const angle = bearing + lobe * Math.PI * 2 / 3;
@@ -431,13 +590,15 @@ export class View {
         rotation.setFromEuler(angles.set(rand() * 0.4, angle, rand() * 0.4));
         matrix.compose(w(x + Math.cos(angle) * offset, y + Math.sin(angle) * offset, top),
           rotation, size.set(width, width * (0.77 + rand() * 0.47), width));
-        const index = i * 4 + lobe;
+        const index = broadleafCount++;
         crowns.setMatrixAt(index, matrix);
         crowns.setColorAt(index, color.copy(green).offsetHSL(0, 0, (rand() - 0.5) * 0.09));
       }
     });
     this.trees = new THREE.Group();
-    this.trees.add(trunks, crowns);
+    crowns.count = broadleafCount;
+    needles.count = evergreenCount;
+    this.trees.add(trunks, crowns, needles);
     this.scene.add(this.trees);
   }
   setTreesVisible(v) {
@@ -566,8 +727,9 @@ export class View {
     S.add(this.selOutline);
 
     this.geo = {
-      body: new THREE.CylinderGeometry(0.55, 0.75, 3.1, 10),
-      head: new THREE.SphereGeometry(0.62, 12, 10),
+      torso: new THREE.CapsuleGeometry(0.55, 1.15, 3, 8),
+      head: new THREE.SphereGeometry(0.41, 12, 8),
+      limb: new THREE.CapsuleGeometry(0.24, 1.63, 2, 6),
       dogBody: new THREE.BoxGeometry(2, 0.9, 0.85),
       dogHead: new THREE.BoxGeometry(0.75, 0.7, 0.7),
       litter: new THREE.IcosahedronGeometry(0.6, 0),
@@ -577,6 +739,7 @@ export class View {
     };
     this.mats = {
       skin: new THREE.MeshLambertMaterial({ color: COLORS.skin }),
+      trousers: new THREE.MeshLambertMaterial({ color: '#263647' }),
       dog: new THREE.MeshLambertMaterial({ color: COLORS.dog }),
       activity: Object.fromEntries(['walking', 'standing', 'sitting', 'boating'].map((a) => [a, new THREE.MeshLambertMaterial({ color: COLORS[a] })])),
       litter: COLORS.litter.map((c) => new THREE.MeshBasicMaterial({ color: c })),
@@ -587,12 +750,20 @@ export class View {
 
   makePerson() {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(this.geo.body, this.mats.activity.walking);
-    body.position.y = 1.55;
+    const body = new THREE.Mesh(this.geo.torso, this.mats.activity.walking);
     const head = new THREE.Mesh(this.geo.head, this.mats.skin);
-    head.position.y = 3.6;
-    g.add(body, head);
-    g.userData.body = body; g.userData.head = head; g.userData.base = 2.1;
+    head.scale.y = 1.15;
+    const arms = [], legs = [];
+    for (const side of [-1, 1]) {
+      const arm = new THREE.Mesh(this.geo.limb, this.mats.activity.walking);
+      arm.scale.set(0.84, 0.93, 0.84);
+      arm.rotation.x = side * 0.1;
+      const leg = new THREE.Mesh(this.geo.limb, this.mats.trousers);
+      legs.push(leg);
+      arms.push(arm);
+    }
+    g.add(body, head, ...arms, ...legs);
+    Object.assign(g.userData, { body, head, arms, legs, base: 1 });
     return g;
   }
   makeDog() {
@@ -602,7 +773,7 @@ export class View {
     const tail = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.15, 0.15), this.mats.dog); tail.position.set(-1.2, 1.4, 0); tail.rotation.z = 0.6;
     const legs = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.6, 0.6), this.mats.dog); legs.position.y = 0.3;
     g.add(body, head, tail, legs);
-    g.userData.base = 1.9;
+    g.userData.base = 1.15;
     return g;
   }
   makeBoat() {
@@ -647,7 +818,7 @@ export class View {
     bar.position.y = 4.2;
     g.add(bar);
     g.userData.battery = bar;
-    g.userData.base = 1.8;
+    g.userData.base = 1.1;
     return g;
   }
 
@@ -684,11 +855,18 @@ export class View {
     const m = this.model;
     const rain = m.weather.rainIntensity;
     const camDist = this.camera.position.distanceTo(this.controls.target);
-    this.entityScale = Math.min(7, Math.max(1, camDist / 260));
+    this.entityScale = THREE.MathUtils.clamp(1 + (camDist - 300) / 3300, 1, 1.85);
     const wet = rain === 'heavy' ? 1 : rain === 'light' ? 0.5 : 0;
-    this.scene.background.copy(this.sky.dry).lerp(this.sky.wet, wet);
+    this.scene.background.copy(this.night ? this.sky.night : this.sky.dry);
+    if (!this.night) this.scene.background.lerp(this.sky.wet, wet);
     this.scene.fog.color.copy(this.scene.background);
-    this.sun.intensity = 2.15 - wet * 1.15;
+    this.sun.intensity = this.night ? 0.36 - wet * 0.1 : 2.15 - wet * 1.15;
+    this.hemi.intensity = this.night ? 0.8 : 1.5;
+    this.hemi.color.set(this.night ? '#a3bcf3' : '#e1efff');
+    this.hemi.groundColor.set(this.night ? '#35434c' : '#8b7c50');
+    this.pathMaterial.emissiveIntensity = this.night ? 0.38 : 0;
+    this.lakeWater.material.emissive.set(this.night ? '#155073' : '#000000');
+    this.pathLights.visible = this.night;
     this.lakeTime.value = (this.lakeTime.value + dt) % 10000;
 
     // Lawns: grass color by height, brown wear patches, hatching for closed/reseeding.
@@ -762,13 +940,19 @@ export class View {
     const topOf = (loc) => REGION_TOP[m.byId[loc]?.kind] ?? 0.6;
     add(this.syncEntities(m.boats, () => this.makeBoat(), (b, o, d) => this.ease(o, w(b.x, b.y, lakeY + 0.3), d, b.heading), dt));
     add(this.syncEntities(m.people, () => this.makePerson(), (p, o, d) => {
-      const body = o.userData.body;
+      const { body, head, arms, legs } = o.userData;
       body.material = this.mats.activity[p.activity];
       const sit = p.activity === 'sitting' || p.activity === 'boating';
-      body.scale.y = sit ? 0.55 : 1;
-      body.position.y = sit ? 0.85 : 1.55;
-      o.userData.head.position.y = sit ? 2.3 : 3.6;
-      let x = p.x, y = p.y, h = topOf(p.location), heading;
+      body.position.y = sit ? 2.32 : 3.63;
+      head.position.y = sit ? 3.79 : 5.1;
+      for (const [i, side] of [-1, 1].entries()) {
+        arms[i].material = body.material;
+        arms[i].position.set(sit ? 0.38 : 0, sit ? 2.25 : 3.62, side * 0.7);
+        arms[i].rotation.z = sit ? -0.45 : 0;
+        legs[i].position.set(sit ? 0.83 : 0, sit ? 1.15 : 1.46, side * 0.3);
+        legs[i].rotation.z = sit ? -Math.PI * 0.42 : 0;
+      }
+      let x = p.x, y = p.y, h = topOf(p.location), heading = p.heading;
       if (p.activity === 'boating') {
         const b = m.boat(p.boatId);
         if (b) {
@@ -778,6 +962,14 @@ export class View {
         }
       }
       this.ease(o, w(x, y, h), d, heading);
+
+      // Keep a short display history by simulation minute, independent of camera movement.
+      let trail = this.visitorTrails.get(p);
+      if (!trail) { trail = []; this.visitorTrails.set(p, trail); }
+      if (trail.at(-1)?.time !== m.time) {
+        trail.push({ x, y, h: h + 0.6, time: m.time });
+        if (trail.length > 45) trail.shift();
+      }
     }, dt));
     add(this.syncEntities(m.dogs, () => this.makeDog(), (dg, o, d) => {
       const own = m.person(dg.ownerId);
@@ -816,26 +1008,27 @@ export class View {
         bar.scale.x = Math.max(0.05, r.battery / 100) * 3;
         bar.material.color.setHSL((r.battery / 100) * 0.33, 0.8, 0.45);
         bar.rotation.y = -o.rotation.y;
+        bar.visible = selection?.id === r.id || this.showTrails;
       }, dt));
     }
     for (const [id, o] of this.meshes) if (!alive.has(id)) { this.scene.remove(o); this.meshes.delete(id); }
 
-    this.updateLines(lakeY);
+    this.updateLines(lakeY, selection);
     this.updateTrails(lakeY);
     this.updateScreen(dt);
     this.knowledge.update(dt, selection, this.entityScale);
     this.updateSelection(selection, lakeY);
   }
 
-  updateLines(lakeY) {
-    const m = this.model, s = this.entityScale;
+  updateLines(lakeY, selection) {
+    const m = this.model;
     // Leashes: owner's hand to dog's collar, using the eased mesh positions.
     let k = 0;
     const la = this.leashes.geometry.attributes.position.array;
     for (const d of m.dogs) {
       const om = this.meshes.get(d.ownerId), dm = this.meshes.get(d.id);
       if (!om || !dm) continue;
-      la.set([om.position.x, om.position.y + 2.6 * om.scale.y, om.position.z, dm.position.x, dm.position.y + 1.6 * dm.scale.y, dm.position.z], k); k += 6;
+      la.set([om.position.x, om.position.y + 2.8 * om.scale.y, om.position.z, dm.position.x, dm.position.y + 1.6 * dm.scale.y, dm.position.z], k); k += 6;
     }
     this.leashes.geometry.setDrawRange(0, k / 3);
     this.leashes.geometry.attributes.position.needsUpdate = true;
@@ -863,11 +1056,12 @@ export class View {
     const ta = this.targets.geometry.attributes.position.array, tc = this.targets.geometry.attributes.color.array;
     const col = new THREE.Color();
     for (const r of m.robots()) {
+      if (this.night && selection?.id !== r.id) continue;
       const rm = this.meshes.get(r.id);
       const tp = this.targetPoint(r, lakeY);
       if (!rm || !tp) continue;
       col.set(COLORS[r.kind]);
-      ta.set([rm.position.x, rm.position.y + 3 * s, rm.position.z, tp.x, tp.y, tp.z], k);
+      ta.set([rm.position.x, rm.position.y + 2 * rm.scale.y, rm.position.z, tp.x, tp.y, tp.z], k);
       tc.set([col.r, col.g, col.b, col.r, col.g, col.b], k); k += 6;
     }
     this.targets.geometry.setDrawRange(0, k / 3);
