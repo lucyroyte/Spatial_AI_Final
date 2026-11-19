@@ -284,3 +284,28 @@ details.more .menu p { margin: 0; font-size: 11px; }
   details.more .menu { right: 0; width: min(560px, 100%); max-height: 50vh; overflow: auto; }
   #status { left: 8px; bottom: 8px; }
 }
+
+/* Layout: modes and view on top, time and robots in a dock at the bottom. */
+.tb-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stages { gap: 2px; padding: 3px; background: var(--btn); border: 1px solid var(--border); border-radius: 10px; }
+.stages button, #btn-design:not(.on) { background: transparent; border-color: transparent; color: var(--text); }
+.stages button:hover:not(.on) { background: var(--btn-hover); }
+.stages button.on, #btn-design.on { background: var(--accent); color: #fff; box-shadow: none; }
+button.icon { width: 30px; height: 30px; justify-content: center; padding: 0; border-radius: 50%; font-weight: 700; }
+details.more[open] summary { background: var(--btn-hover); }
+#timebar {
+  position: fixed; left: 344px; bottom: 16px; max-width: calc(100vw - 344px - 140px); z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 10px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); backdrop-filter: blur(6px);
+}
+#timebar .sep { width: 1px; align-self: stretch; background: var(--border); }
+#btn-play { min-width: 82px; justify-content: center; font-weight: 650; }
+.tb-clock { font-variant-numeric: tabular-nums; font-weight: 650; padding: 0 4px; }
+#toasts { bottom: 84px; }
+@media (max-width: 760px) {
+  #timebar { left: 8px; right: 8px; bottom: 8px; max-width: none; padding: 6px; gap: 5px; }
+  #timebar .sep { display: none; }
+  #status { bottom: 112px; max-height: 26vh; }
+  #toasts { bottom: 200px; }
+  .tb-right { width: 100%; }
+}

@@ -202,7 +202,7 @@ function renderStatus() {
   const bar = $('st-lake-bar');
   bar.style.width = `${Math.max(0, Math.min(100, ((lvl + 10) / 24) * 100))}%`;
   bar.classList.toggle('over', lvl > 0);
-  $('st-step').textContent = `Day ${model.day.number} · ${model.clock()}`;
+  $('st-step').textContent = $('tb-clock').textContent = `Day ${model.day.number} · ${model.clock()}`;
   $('st-duck').textContent = `Duckweed ${fmt(model.duckweedCover(), 0)}%`;
   $('st-weed').textContent = `Weeds ${fmt(model.woods.weedCover, 0)}%`;
   $('btn-rain').textContent = `Rain: ${rain}`;
@@ -305,7 +305,7 @@ function run(action) {
     case 'play':
       if (playing) { clearInterval(playing); playing = null; }
       else playing = setInterval(advance, 140);
-      $('btn-play').textContent = playing ? 'Pause' : 'Play';
+      $('btn-play').textContent = playing ? '❚❚ Pause' : '▶ Play';
       $('btn-play').classList.toggle('on', !!playing);
       break;
     case 'fast':
@@ -327,7 +327,7 @@ function run(action) {
   renderInspector();
 }
 
-document.querySelectorAll('#toolbar [data-action]').forEach((b) => b.addEventListener('click', () => run(b.dataset.action)));
+document.querySelectorAll('#toolbar [data-action], #timebar [data-action]').forEach((b) => b.addEventListener('click', () => run(b.dataset.action)));
 $('insp-close').addEventListener('click', () => select(null));
 $('insp-body').addEventListener('click', (ev) => {
   if (ev.target.closest('[data-know]')) setOverlay(view.knowledge.mode === 'agent' ? 'off' : 'agent');

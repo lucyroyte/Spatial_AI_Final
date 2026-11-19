@@ -20,40 +20,25 @@
 
   <header id="toolbar" role="toolbar" aria-label="Actions">
     <div class="brand"><strong>Central Park</strong><span>Designing a park for agents who only know what they've seen</span></div>
-    <nav class="stages" aria-label="Park views">
-      <button id="stage-explore" class="on" aria-pressed="true">Explore</button>
-      <button id="stage-perceive" aria-pressed="false">Perceive</button>
+    <nav class="stages" aria-label="Mode">
+      <button id="stage-explore" class="on" aria-pressed="true" title="Watch the park">Explore</button>
+      <button id="stage-perceive" aria-pressed="false" title="See what visitors and robots know (K for the selected one)">Perceive</button>
       <button id="btn-design" class="primary" aria-controls="designer" aria-expanded="false" title="Generate, compare and evolve park layouts">Evolve</button>
     </nav>
     <label class="overlay" id="perceive-controls" hidden>Overlay <select id="overlay"></select></label>
-    <label class="overlay">View
-      <select id="scene-preset">
-        <option value="overview">Day overview</option>
-        <option value="lakeside">Day lakeside</option>
-        <option value="relief">Day relief (3D)</option>
-        <option value="night">Night trails</option>
-      </select>
-    </label>
-    <div class="group time-tools" aria-label="Simulation time">
-      <button data-action="play" id="btn-play" title="Run time continuously (Space)">Play</button>
-      <button data-action="advance" title="Advance one time step (one minute)">Step</button>
-      <button data-action="rain" id="btn-rain" title="Cycle rain: none, light, heavy">Rain: none</button>
-      <button data-action="monitor" id="btn-monitor" title="Open the robot center's monitor (M)">Monitor</button>
-    </div>
-    <details class="more">
-      <summary>Park tools</summary>
-      <div class="menu">
-        <div class="group" aria-label="Simulation">
-          <span class="group-label">Simulation</span>
-          <button data-action="fast" id="btn-fast" title="Run 10 steps per tick">Fast</button>
-          <button data-action="reset" title="Return to the example scene">Reset</button>
-          <button data-action="about" id="btn-about" title="The thesis and how to read the simulation">About</button>
-        </div>
-        <div class="group" aria-label="Robot controller">
-          <span class="group-label">Robot controller</span>
-          <button data-action="auto" id="btn-auto" class="on" title="Let the robot controller deploy, buy and park robots">Auto: on</button>
-          <label class="budget" title="Robot budget: the total price of the fleet can't go over it">Budget $<input id="budget" type="number" min="0" max="999" step="10" value="150">k</label>
-        </div>
+    <div class="tb-right">
+      <label class="overlay">View
+        <select id="scene-preset">
+          <option value="overview">Day overview</option>
+          <option value="lakeside">Day lakeside</option>
+          <option value="relief">Day relief (3D)</option>
+          <option value="night">Night trails</option>
+        </select>
+      </label>
+      <button data-action="trees" id="btn-trees" class="on" title="Show or hide trees">Trees</button>
+      <details class="more">
+        <summary title="Add visitors, robots, litter; break fences; mow or close lawns">Add &amp; edit</summary>
+        <div class="menu">
         <div class="group" aria-label="People">
           <span class="group-label">People</span>
           <button data-action="addVisitors" title="25 more visitors come in at the park entrances. Each one only knows where it came in.">Add 25 visitors</button>
@@ -77,14 +62,30 @@
           <button data-action="addSteward" title="Add an idle steward robot on a random path"><i class="sw steward"></i>Add steward</button>
           <button data-action="addSkimmer" title="Add an idle skimmer robot on the lake"><i class="sw skimmer"></i>Add skimmer</button>
         </div>
-        <div class="group" aria-label="View">
-          <span class="group-label">View</span>
-          <button data-action="trees" id="btn-trees" class="on" title="Show or hide trees">Trees</button>
+          <p class="muted">Select a person, lawn or fence first for the greyed-out actions; they also show in its panel.</p>
         </div>
-        <p class="muted">Actions for a selected person, lawn or fence also show in its panel.</p>
-      </div>
-    </details>
+      </details>
+      <button data-action="about" id="btn-about" class="icon" title="What this is and how to read it">?</button>
+    </div>
   </header>
+
+  <div id="timebar" role="toolbar" aria-label="Time and robots">
+    <div class="group" aria-label="Time">
+      <button data-action="play" id="btn-play" class="play" title="Run time continuously (Space)">▶ Play</button>
+      <button data-action="advance" title="Advance one minute">Step</button>
+      <button data-action="fast" id="btn-fast" title="Run 10 minutes per tick">Fast ×10</button>
+      <span id="tb-clock" class="tb-clock">Day 1 · 06:00</span>
+      <button data-action="rain" id="btn-rain" title="Cycle rain: none, light, heavy">Rain: none</button>
+      <button data-action="reset" title="Return to the example scene">Reset</button>
+    </div>
+    <span class="sep" aria-hidden="true"></span>
+    <div class="group" aria-label="Robots">
+      <span class="group-label">Robots</span>
+      <button data-action="monitor" id="btn-monitor" title="Open the robot center's monitor (M)">Monitor</button>
+      <button data-action="auto" id="btn-auto" class="on" title="Let the robot controller deploy, buy and park robots">Auto: on</button>
+      <label class="budget" title="Robot budget: the total price of the fleet can't go over it">$<input id="budget" type="number" min="0" max="999" step="10" value="150">k</label>
+    </div>
+  </div>
 
   <section id="status" aria-live="polite">
     <div><span class="k">Rain</span><span id="st-rain" class="v">none</span></div>
