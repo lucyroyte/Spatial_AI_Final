@@ -56,8 +56,6 @@ People walk at full speed on paths, 80% on lawns, 60% in the Ramble's undergrowt
 | Planimetric Roadbed (i36f-5ih7) and Pavement Edge (vs44-rznx) | Drives and walks |
 | Planimetric Elevation Points (9uxf-ng6q) | Low, medium or high ground for each lawn and path |
 
-Tree positions are sampled from the 2017 LiDAR canopy layer. The 3D view spaces those samples more widely around the landing and on lawns, and keeps trunks clear of mapped walks and Ramble trails. Summer crown shapes are inspired by red oak, hickory, red maple and sweetgum listed in the [Central Park Conservancy foliage map](https://assets.centralparknyc.org/media/images/CPCWeb_Downloadablemaps_2022_CPFallFoliageMap_Final.pdf). Species and individual trunk locations are visual approximations.
-
 How the regions are made:
 
 - **The Ramble** (the woods) is the land within reach of its trail network, with a fence segment about every 40 ft along its edge, except along the shore. The maintenance gate is on the fence closest to the robot center that touches a path.
