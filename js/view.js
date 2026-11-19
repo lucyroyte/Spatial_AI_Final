@@ -533,19 +533,30 @@ export class View {
 
   buildTrees() {
     const layout = this.model.layout;
-    const pathDistance = layout.distanceField((cell) => layout.regionOfCell(cell)?.kind === 'path');
-    const keepTree = G.mulberry32(73);
-    // Open up sightlines at paths and the landing while keeping the woods continuous.
+    const trails = new Set(layout.trailCells);
+    const pathDistance = layout.distanceField((cell) => trails.has(cell) || layout.regionOfCell(cell)?.kind === 'path');
+    const spacing = 40;
+    const planted = new Map();
+    // Space out the LiDAR canopy samples without shifting them into open ground.
     const trees = layout.trees.filter(([x, y, radius]) => {
-      const chance = keepTree();
       const point = { x, y };
       const cell = layout.cellAt(point);
       const kind = layout.regionOfCell(cell)?.kind;
-      if (G.dist(point, this.buildingPos) < 18 + radius * 0.6) return false;
-      if (kind === 'path' || kind === 'lawn' || kind === 'lake') return false;
-      if (G.dist(point, layout.landing.position) < 150) return chance < 0.25;
-      if (pathDistance[cell] * layout.cell < radius + 12) return chance < 0.32;
-      return chance < (kind === 'woods' ? 0.76 : 0.48);
+      const clearance = G.dist(point, layout.landing.position);
+      if (G.dist(point, this.buildingPos) < 18 + radius * 0.6 || clearance < 20) return false;
+      if (kind === 'path' || kind === 'lake' || pathDistance[cell] <= 1) return false;
+      const gap = clearance < 115 || kind === 'lawn' ? 40 : kind === 'woods' ? 22 : 31;
+      const col = Math.floor(x / spacing), row = Math.floor(y / spacing);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const neighbors = planted.get(`${col + dx},${row + dy}`) || [];
+          if (neighbors.some((tree) => G.dist(tree, point) < Math.max(gap, tree.gap))) return false;
+        }
+      }
+      const key = `${col},${row}`;
+      if (!planted.has(key)) planted.set(key, []);
+      planted.get(key).push({ ...point, gap });
+      return true;
     });
     const rand = G.mulberry32(42);
     const trunkGeo = new THREE.CylinderGeometry(0.45, 0.8, 1, 6);
@@ -564,35 +575,26 @@ export class View {
         `);
     };
     const crowns = new THREE.InstancedMesh(crownGeo, foliage, trees.length * 4);
-    const needles = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 9), foliage, Math.ceil(trees.length / 11) * 4);
-    needles.castShadow = true;
-    needles.receiveShadow = true;
-    let broadleafCount = 0, evergreenCount = 0;
     crowns.castShadow = true;
     crowns.receiveShadow = true;
     const matrix = new THREE.Matrix4(), rotation = new THREE.Quaternion();
     const size = new THREE.Vector3(), angles = new THREE.Euler();
-    const greens = ['#31583a', '#3c693b', '#50743e', '#65834a', '#788e45'].map(c3);
-    const color = new THREE.Color(), upAxis = new THREE.Vector3(0, 1, 0);
+    // Summer silhouettes based on broadleaf trees documented in The Ramble.
+    const profiles = [
+      { green: c3('#456c40'), width: 1.22, height: 0.93, crown: 0.76 }, // red oak
+      { green: c3('#526f42'), width: 0.92, height: 1.15, crown: 1.08 }, // hickory
+      { green: c3('#64824a'), width: 1.02, height: 1.0, crown: 0.92 }, // red maple
+      { green: c3('#3a6042'), width: 0.85, height: 1.1, crown: 1.17 }, // sweetgum
+    ];
+    const color = new THREE.Color();
     trees.forEach(([x, y, radius], i) => {
-      const height = 15 + radius * (1.2 + rand() * 0.55);
-      const spread = Math.max(5, radius * (0.68 + rand() * 0.22));
-      const green = greens[Math.floor(rand() * greens.length)];
+      const profile = profiles[Math.floor(rand() * profiles.length)];
+      const height = (15 + radius * (1.2 + rand() * 0.55)) * profile.height;
+      const spread = Math.max(5, radius * (0.68 + rand() * 0.22) * profile.width);
       rotation.identity();
       matrix.compose(w(x, y, height * 0.35), rotation, size.set(1.6, height * 0.7, 1.6));
       trunks.setMatrixAt(i, matrix);
       const bearing = rand() * Math.PI * 2;
-      if (i % 11 === 0) {
-        rotation.setFromAxisAngle(upAxis, bearing);
-        for (let tier = 0; tier < 4; tier++) {
-          const width = spread * (0.75 - tier * 0.13);
-          matrix.compose(w(x, y, height * (0.43 + tier * 0.19)),
-            rotation, size.set(width, height * 0.48, width));
-          needles.setMatrixAt(evergreenCount, matrix);
-          needles.setColorAt(evergreenCount++, color.set('#355345').offsetHSL(0, 0, tier * 0.029));
-        }
-        return;
-      }
       for (let lobe = 0; lobe < 4; lobe++) {
         const central = lobe === 0;
         const angle = bearing + lobe * Math.PI * 2 / 3;
@@ -601,16 +603,14 @@ export class View {
         const top = height * (central ? 0.94 : 0.67 + rand() * 0.17);
         rotation.setFromEuler(angles.set(rand() * 0.4, angle, rand() * 0.4));
         matrix.compose(w(x + Math.cos(angle) * offset, y + Math.sin(angle) * offset, top),
-          rotation, size.set(width, width * (0.77 + rand() * 0.47), width));
-        const index = broadleafCount++;
+          rotation, size.set(width, width * (0.77 + rand() * 0.47) * profile.crown, width));
+        const index = i * 4 + lobe;
         crowns.setMatrixAt(index, matrix);
-        crowns.setColorAt(index, color.copy(green).offsetHSL(0, 0, (rand() - 0.5) * 0.09));
+        crowns.setColorAt(index, color.copy(profile.green).offsetHSL(0, 0, (rand() - 0.5) * 0.09));
       }
     });
     this.trees = new THREE.Group();
-    crowns.count = broadleafCount;
-    needles.count = evergreenCount;
-    this.trees.add(trunks, crowns, needles);
+    this.trees.add(trunks, crowns);
     this.scene.add(this.trees);
   }
   setTreesVisible(v) {
