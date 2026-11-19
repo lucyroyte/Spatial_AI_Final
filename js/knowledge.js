@@ -4,7 +4,9 @@ import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { K } from './mind.js';
 
-const w = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+// Ground height (display ft) under a model point; the view passes its terrain in.
+let ground = () => 0;
+const w = (x, y, h = 0) => new THREE.Vector3(x, h + ground(x, y), -y);
 
 export const OVERLAYS = {
   off: 'No overlay',
@@ -32,7 +34,8 @@ const MARKS = ramp([[158, 154, 200], [128, 90, 190], [106, 30, 150], [60, 0, 90]
 const SHARE = ramp([[65, 182, 196], [29, 145, 192], [34, 94, 168], [12, 44, 132]]);
 
 export class KnowledgeLayer {
-  constructor(scene, model) {
+  constructor(scene, model, groundAt) {
+    if (groundAt) ground = groundAt;
     this.scene = scene;
     this.model = model;
     this.mode = 'off';
@@ -44,11 +47,14 @@ export class KnowledgeLayer {
     this.tex.magFilter = THREE.LinearFilter;
     this.tex.needsUpdate = true;
     const W = this.cols * L.cell * 2, H = this.rows * L.cell * 2;
-    this.plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(W, H).rotateX(-Math.PI / 2),
+    // A grid draped over the terrain, so the overlay sits on the hills.
+    const sheet = new THREE.PlaneGeometry(W, H, Math.ceil(W / 20), Math.ceil(H / 20)).rotateX(-Math.PI / 2);
+    const cx = L.x0 + W / 2, cy = L.y0 + H / 2, sp = sheet.attributes.position;
+    for (let i = 0; i < sp.count; i++) sp.setY(i, ground(cx + sp.getX(i), cy - sp.getZ(i)));
+    this.plane = new THREE.Mesh(sheet,
       new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false, depthTest: false }),
     );
-    this.plane.position.copy(w(L.x0 + W / 2, L.y0 + H / 2, 2.5));
+    this.plane.position.copy(new THREE.Vector3(cx, 2.5, -cy));
     this.plane.renderOrder = 2;
     this.plane.visible = false;
     scene.add(this.plane);
@@ -200,10 +206,10 @@ export class KnowledgeLayer {
     this.coneFill.visible = !!cone && this.model.time - cone.t <= 3;
     if (this.coneFill.visible) {
       const h = 3, fov = (cone.fov * Math.PI) / 180, n = 24, col = new THREE.Color(agent.kind === 'person' ? '#9ee7ff' : '#ffd090');
-      const pt = (a) => [agent.x + Math.cos(a) * cone.range, h, -(agent.y + Math.sin(a) * cone.range)];
+      const pt = (a) => { const x = agent.x + Math.cos(a) * cone.range, y = agent.y + Math.sin(a) * cone.range; return [x, h + ground(x, y), -y]; };
       const a0 = cone.fov >= 360 ? 0 : cone.heading - fov / 2, span = cone.fov >= 360 ? Math.PI * 2 : fov;
       const seg = (p, q) => { pa.set([...p, ...q], k); ca.set([col.r, col.g, col.b, col.r, col.g, col.b], k); k += 6; };
-      const o = [agent.x, h, -agent.y];
+      const o = [agent.x, h + ground(agent.x, agent.y), -agent.y];
       if (cone.fov < 360) { seg(o, pt(a0)); seg(o, pt(a0 + span)); }
       const fill = this.coneFill.geometry.attributes.position;
       this.coneFill.material.color.copy(col);
@@ -227,7 +233,7 @@ export class KnowledgeLayer {
     const seg = (x1, y1, h1, x2, y2, h2, c) => {
       if (k + 6 > pa.length) return;
       col.set(c);
-      pa.set([x1, h1, -y1, x2, h2, -y2], k); pc.set([col.r, col.g, col.b, col.r, col.g, col.b], k); k += 6;
+      pa.set([x1, h1 + ground(x1, y1), -y1, x2, h2 + ground(x2, y2), -y2], k); pc.set([col.r, col.g, col.b, col.r, col.g, col.b], k); k += 6;
     };
     if (agent) {
       const s = Math.min(4, scale), lms = agent.mind.landmarks;
@@ -266,7 +272,7 @@ export class KnowledgeLayer {
       let prev = agent;
       for (let i = 0; i < agent.route.length && k + 6 <= ra.length; i += 1) {
         const q = agent.route[i];
-        ra.set([prev.x, 2.2, -prev.y, q.x, 2.2, -q.y], k);
+        ra.set([prev.x, 2.2 + ground(prev.x, prev.y), -prev.y, q.x, 2.2 + ground(q.x, q.y), -q.y], k);
         rc.set([col.r, col.g, col.b, col.r, col.g, col.b], k);
         k += 6;
         prev = q;

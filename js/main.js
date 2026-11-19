@@ -82,7 +82,7 @@ function describe(e) {
   if (k === 'lawn') {
     const people = model.peopleIn(e.id).length, dogs = model.dogsIn(e.id).length;
     rows.push(['Grass height', inches(e.grassHeight)], ['Wear', `${fmt(e.wear)}%`], ['Area', `${Math.round(e.area).toLocaleString()} sq ft`],
-      ['Elevation', e.elevation], ['Standing water', inches(e.standingWater)], ['Status', e.status + (e.status === 'reseeding' && !e.pendingReseed ? ` (${e.reseedTimer} steps left)` : '')],
+      ['Elevation', Number.isFinite(e.elevationFt) ? `${e.elevation} · ${Math.round(e.elevationFt)} ft` : e.elevation], ['Standing water', inches(e.standingWater)], ['Status', e.status + (e.status === 'reseeding' && !e.pendingReseed ? ` (${e.reseedTimer} steps left)` : '')],
       ['People / dogs', `${people} / ${dogs} (max ${model.lawnCapacity(e)} people)`], ['Boundary', `${e.boundary.length}-point polygon`]);
     if (e.grassHeight > RULES.NEEDS_MOWING) flags.push(['Needs mowing']);
     if (e.wear > RULES.NEEDS_RESEEDING) flags.push(['Needs reseeding', true]);
@@ -93,7 +93,7 @@ function describe(e) {
     return { title: e.name, rows, flags };
   }
   if (k === 'path') {
-    rows.push(['Width', `${e.width} ft`], ['Elevation', e.elevation], ['Standing water', inches(e.standingWater)], ['Boundary', `${e.boundary.length}-point polygon`],
+    rows.push(['Width', `${e.width} ft`], ['Elevation', Number.isFinite(e.elevationFt) ? `${e.elevation} · ${Math.round(e.elevationFt)} ft` : e.elevation], ['Standing water', inches(e.standingWater)], ['Boundary', `${e.boundary.length}-point polygon`],
       ['Borders', [...model.layout.adj[e.id]].map(regionName).join(', ')]);
     if (e.overflow) flags.push(['Flooded by lake overflow', true]);
     else if (e.standingWater > RULES.PERSON_MAX_WATER) flags.push(['Over 3″ of water: closed to people', true]);

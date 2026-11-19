@@ -8,8 +8,12 @@ import * as G from './geometry.js';
 import { RULES } from './model.js';
 import { drawRobotMap, ROBOT_COLORS } from './monitor.js';
 import { KnowledgeLayer } from './knowledge.js';
+import { buildTerrain, drapeGeometry, terrainSheet } from './terrain.js';
 
-const w = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+// Ground height (display ft above the lake) under a model point. Every w()
+// placement stands on it, so heights passed to w() are above the ground.
+let ground = () => 0;
+const w = (x, y, h = 0) => new THREE.Vector3(x, h + ground(x, y), -y);
 
 export const COLORS = {
   walking: '#1757d2', standing: '#3982ed', sitting: '#4ebcf6', boating: '#9bdcff',
@@ -102,11 +106,47 @@ function flatMesh(polygons, mat, h, depth = 0) {
   mesh.receiveShadow = true;
   return mesh;
 }
+// Contour lines every 5 ft of real elevation, darker every 20 ft, drawn from
+// the draped height (shape-space z), so every ground layer agrees.
+const CONTOUR = { uK: { value: 1 }, uLake: { value: 57 }, uContour: { value: 1 } };
+function withContours(mat) {
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (sh, r) => {
+    if (prev) prev(sh, r);
+    Object.assign(sh.uniforms, CONTOUR);
+    sh.vertexShader = 'varying float vGroundH;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vGroundH = position.z;');
+    sh.fragmentShader = 'varying float vGroundH;\nuniform float uK, uLake, uContour;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', `#include <dithering_fragment>
+      if (uContour > 0.0 && vGroundH > 0.5) {
+        float e = uLake + vGroundH / uK;
+        float c = e / 5.0, f = abs(fract(c - 0.5) - 0.5) / max(fwidth(c), 1e-4);
+        float c2 = e / 20.0, f2 = abs(fract(c2 - 0.5) - 0.5) / max(fwidth(c2), 1e-4);
+        float minor = 1.0 - smoothstep(0.0, 1.0, f), major = 1.0 - smoothstep(0.0, 1.6, f2);
+        float fade = 1.0 - smoothstep(0.35, 1.0, fwidth(c) * 6.0);
+        gl_FragColor.rgb *= 1.0 - max(minor * 0.16, major * 0.32) * fade * uContour;
+      }`);
+  };
+  mat.customProgramCacheKey = () => 'contour' + (prev ? prev.toString().length : 0);
+  return mat;
+}
+
+// A ground mesh: the polygons draped over the terrain, h above it.
+function groundMesh(polygons, mat, h) {
+  const mesh = new THREE.Mesh(drapeGeometry(new THREE.ShapeGeometry(shapesOf(polygons)), ground), mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = h;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+// Outlines follow the ground, so long edges are split every 10 ft.
 function ringLines(polygons, h) {
   const pts = [];
   for (const poly of polygons) for (const ring of poly) for (let i = 0; i < ring.length; i++) {
     const a = ring[i], b = ring[(i + 1) % ring.length];
-    pts.push(w(a.x, a.y, h), w(b.x, b.y, h));
+    const n = Math.max(1, Math.ceil(G.dist(a, b) / 10));
+    for (let j = 0; j < n; j++) {
+      const t0 = j / n, t1 = (j + 1) / n;
+      pts.push(w(a.x + (b.x - a.x) * t0, a.y + (b.y - a.y) * t0, h), w(a.x + (b.x - a.x) * t1, a.y + (b.y - a.y) * t1, h));
+    }
   }
   return new THREE.BufferGeometry().setFromPoints(pts);
 }
@@ -164,9 +204,13 @@ export class View {
     this.entityScale = 1;
     this.night = false;
     this.visitorTrails = new WeakMap();
+    this.terrain = buildTerrain(model.layout);
+    ground = this.terrain.at;
+    CONTOUR.uK.value = this.terrain.exaggeration;
+    CONTOUR.uLake.value = this.terrain.lakeZ;
     this.buildStatic();
     this.buildDynamicLayers();
-    this.knowledge = new KnowledgeLayer(this.scene, model);
+    this.knowledge = new KnowledgeLayer(this.scene, model, ground);
 
     window.addEventListener('resize', () => this.resize());
   }
@@ -183,6 +227,14 @@ export class View {
   setScenePreset(preset) {
     this.night = preset === 'night';
     this.fitCamera();
+    if (preset === 'relief') {
+      // Low from the south-west, looking up the slope to Vista Rock.
+      const f = Math.max(1, 1.6 / this.camera.aspect);
+      this.controls.target.set(120, 35, -260);
+      this.camera.position.set(120 - 1150 * f, 560 * f, -260 + 1500 * f);
+      this.camera.lookAt(this.controls.target);
+      return;
+    }
     if (preset !== 'lakeside') return;
 
     const { pathPoint, waterPoint } = this.model.layout.landing;
@@ -249,14 +301,19 @@ export class View {
     // Its top stays below the lake bed (-3.9) so the water shows through.
     const base = flatMesh(L.other.park.map(([outer]) => [outer]), lam('#a5a18d'), -16.2, 12);
     S.add(base);
+    // Its sides rise to meet the terrain, so the cut edge shows the relief.
+    S.add(this.buildSkirt(L.other.park.map(([outer]) => outer), -16.2, lam('#a5a18d')));
     // The park ground has the lake cut out so the water shows through.
     const lakeHoles = L.lake.polygons.map((poly) => poly[0]);
-    S.add(flatMesh(L.other.park.map(([outer, ...holes]) => [outer, ...holes, ...lakeHoles]), lam(COLORS.meadow), 0.05));
-    S.add(flatMesh(L.other.plantings, lam(COLORS.planting), 0.3));
-    S.add(flatMesh(L.other.water, lam(COLORS.water), 0.1));
-    const bld = flatMesh(L.other.buildings, lam(COLORS.building), 0, 14);
-    bld.castShadow = true;
-    S.add(bld);
+    S.add(this.buildGroundSheet(L, lakeHoles));
+    // Each building sits on the lowest ground under it.
+    for (const poly of L.other.buildings) {
+      const hs = poly[0].map((p) => ground(p.x, p.y));
+      const lo = Math.min(...hs), mean = hs.reduce((t, h) => t + h, 0) / hs.length;
+      const bld = flatMesh([poly], lam(COLORS.building), lo - 1, 15 + mean - lo);
+      bld.castShadow = true;
+      S.add(bld);
+    }
 
     S.add(flatMesh(L.lake.polygons, lam(COLORS.lakeBed), -3.9));
     this.lakeTime = { value: 0 };
@@ -270,14 +327,14 @@ export class View {
     const pathMat = this.pathMaterial = lam(COLORS.path);
     pathMat.emissive.set('#ad713b');
     for (const p of L.paths) {
-      const mesh = flatMesh(p.polygons, pathMat, REGION_TOP.path);
+      const mesh = groundMesh(p.polygons, pathMat, REGION_TOP.path);
       mesh.userData.ref = { kind: 'path', id: p.id };
       S.add(mesh); this.pickables.push(mesh); this.regionMeshes[p.id] = mesh;
     }
     for (const l of L.lawns) {
-      const mat = patchMaterial();
+      const mat = withContours(patchMaterial());
       mat.userData.u.uPatch.value.set(COLORS.worn);
-      const mesh = flatMesh(l.polygons, mat, REGION_TOP.lawn);
+      const mesh = groundMesh(l.polygons, mat, REGION_TOP.lawn);
       mesh.userData.ref = { kind: 'lawn', id: l.id };
       S.add(mesh); this.pickables.push(mesh); this.regionMeshes[l.id] = mesh;
       // Orange rope around a closed lawn.
@@ -290,11 +347,11 @@ export class View {
       mesh.userData.badge.visible = false;
     }
     {
-      const mat = patchMaterial();
+      const mat = withContours(patchMaterial());
       mat.userData.u.uBase.value.set(COLORS.leafLitter);
       mat.userData.u.uPatch.value.set(COLORS.weeds);
       mat.userData.u.uScale.value = 0.015;
-      const mesh = flatMesh(L.woods.polygons, mat, REGION_TOP.woods);
+      const mesh = groundMesh(L.woods.polygons, mat, REGION_TOP.woods);
       mesh.userData.ref = { kind: 'woods', id: 'woods' };
       S.add(mesh); this.pickables.push(mesh); this.regionMeshes.woods = mesh;
     }
@@ -418,10 +475,67 @@ export class View {
     })));
   }
 
+  // Meadow, plantings and ponds painted onto one draped grid; the lake is cut
+  // out of the texture so the water shows through.
+  buildGroundSheet(L, lakeHoles) {
+    const B = L.bounds, W = B.x1 - B.x0, H = B.y1 - B.y0;
+    const canvas = document.createElement('canvas');
+    canvas.width = 2048; canvas.height = Math.round(2048 * H / W);
+    const ctx = canvas.getContext('2d'), sx = canvas.width / W, sy = canvas.height / H;
+    const fill = (polygons, color) => {
+      ctx.fillStyle = color;
+      for (const poly of polygons) {
+        ctx.beginPath();
+        for (const ring of poly) ring.forEach((p, i) => ctx[i ? 'lineTo' : 'moveTo']((p.x - B.x0) * sx, (B.y1 - p.y) * sy));
+        ctx.fill('evenodd');
+      }
+    };
+    fill(L.other.park, COLORS.meadow);
+    fill(L.other.plantings, COLORS.planting);
+    fill(L.other.water, COLORS.water);
+    ctx.globalCompositeOperation = 'destination-out';
+    fill(lakeHoles.map((ring) => [ring]), '#000');
+    // Islands are holes in the lake polygons: put their ground back.
+    ctx.globalCompositeOperation = 'source-over';
+    fill(L.lake.polygons.flatMap(([, ...islands]) => islands.map((ring) => [ring])), COLORS.meadow);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    const mat = withContours(new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5 }));
+    const mesh = new THREE.Mesh(terrainSheet(B, ground), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = 0.05;
+    mesh.receiveShadow = true;
+    return mesh;
+  }
+
+  // A vertical wall from `bottom` up to the ground along each ring.
+  buildSkirt(rings, bottom, mat) {
+    const pos = [];
+    for (const ring of rings) for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], b = ring[(i + 1) % ring.length];
+      const n = Math.max(1, Math.ceil(G.dist(a, b) / 10));
+      for (let j = 0; j < n; j++) {
+        const p = { x: a.x + (b.x - a.x) * j / n, y: a.y + (b.y - a.y) * j / n };
+        const q = { x: a.x + (b.x - a.x) * (j + 1) / n, y: a.y + (b.y - a.y) * (j + 1) / n };
+        const hp = ground(p.x, p.y) + 0.05, hq = ground(q.x, q.y) + 0.05;
+        pos.push(p.x, bottom, -p.y, q.x, bottom, -q.y, q.x, hq, -q.y,
+          p.x, bottom, -p.y, q.x, hq, -q.y, p.x, hp, -p.y);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    const m = mat.clone();
+    m.side = THREE.DoubleSide;
+    return new THREE.Mesh(geo, m);
+  }
+
   buildPathLights() {
     const positions = [];
     for (const { anchor } of this.model.layout.paths) {
-      positions.push(anchor.x, 4.8, -anchor.y);
+      const p = w(anchor.x, anchor.y, 4.8);
+      positions.push(p.x, p.y, p.z);
     }
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 64;
