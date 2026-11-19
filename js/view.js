@@ -12,13 +12,13 @@ import { KnowledgeLayer } from './knowledge.js';
 const w = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
 
 export const COLORS = {
-  walking: '#f97316', standing: '#a855f7', sitting: '#0ea5e9', boating: '#facc15',
+  walking: '#1757d2', standing: '#3982ed', sitting: '#4ebcf6', boating: '#9bdcff',
   skin: '#f1c9a5', dog: '#8b5a2b',
-  mower: '#ea580c', steward: '#0f766e', skimmer: '#eab308',
+  mower: '#df5719', steward: '#f78336', skimmer: '#ffb05f',
   litter: ['#ff2bd6', '#ffe600', '#00e5ff', '#ff4d4d'], poop: '#5b3a1e', hole: '#3b2a1a',
-  grassShort: '#c8e27c', grassTall: '#2b6629', worn: '#8a6a3f', straw: '#e6d6a2',
-  leafLitter: '#7a5a3a', weeds: '#8fdc3c', path: '#dccfb2', meadow: '#9fb07f', planting: '#6f8f55',
-  building: '#b9b2a6', lakeBed: '#2d5560', water: '#3f86b8', duckweed: '#86b83a', select: '#22d3ee',
+  grassShort: '#adc26c', grassTall: '#35613a', worn: '#8a6a3f', straw: '#e6d6a2',
+  leafLitter: '#7a5a3a', weeds: '#7ba644', path: '#dccfb2', meadow: '#869d60', planting: '#688653',
+  building: '#b9b2a6', lakeBed: '#2d5560', water: '#3e8587', duckweed: '#789e53', select: '#22d3ee',
   standing_water: '#2f80ed', fenceWood: '#9a6b3f', broken: '#e11d48', pad: '#334155',
 };
 const c3 = (hex) => new THREE.Color(hex);
@@ -56,6 +56,33 @@ function patchMaterial() {
   return m;
 }
 
+// World-space ripples stay continuous across the original lake polygons.
+function lakeMaterial(time) {
+  const material = new THREE.MeshPhongMaterial({
+    color: COLORS.water, shininess: 64, specular: '#a5c5b8',
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uLakeTime = time;
+    shader.vertexShader = 'varying vec2 vLakeXZ;\n' + shader.vertexShader.replace(
+      '#include <worldpos_vertex>',
+      '#include <worldpos_vertex>\n vLakeXZ = (modelMatrix * vec4(transformed, 1.0)).xz;',
+    );
+    shader.fragmentShader = 'varying vec2 vLakeXZ;\nuniform float uLakeTime;\n' + NOISE +
+      shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+        float current = noise(vLakeXZ * 0.008);
+        float a = dot(vLakeXZ, vec2(0.12, 0.19)) + current * 4.0 - uLakeTime * 0.9;
+        float b = dot(vLakeXZ, vec2(-0.17, 0.07)) + uLakeTime * 0.64;
+        float detail = 1.0 - smoothstep(0.8, 3.0, max(fwidth(a), fwidth(b)));
+        diffuseColor.rgb *= 0.83 + current * 0.36 + detail * sin(a) * cos(b) * 0.07;
+      `).replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        normal = normalize(normal + mat3(viewMatrix) * vec3(cos(a), 0.0, sin(b)) * 0.12 * detail);
+        float grazing = pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 3.0);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.29, 0.48, 0.46), grazing * 0.6);
+      `);
+  };
+  return material;
+}
+
 // polygons: [[outer, ...holes], ...] with points {x, y}
 function shapesOf(polygons) {
   return polygons.map(([outer, ...holes]) => {
@@ -70,6 +97,7 @@ function flatMesh(polygons, mat, h, depth = 0) {
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.y = h;
+  mesh.receiveShadow = true;
   return mesh;
 }
 function ringLines(polygons, h) {
@@ -90,6 +118,9 @@ export class View {
     this.model = model;
     this.container = container;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     container.appendChild(this.renderer.domElement);
@@ -99,9 +130,9 @@ export class View {
     container.appendChild(this.labels.domElement);
 
     this.scene = new THREE.Scene();
-    this.sky = { dry: c3('#dfe8ec'), wet: c3('#a9b5bf') };
+    this.sky = { dry: c3('#e6ede5'), wet: c3('#adbcbf') };
     this.scene.background = this.sky.dry.clone();
-    this.scene.fog = new THREE.Fog(this.scene.background, 4000, 9000);
+    this.scene.fog = new THREE.Fog(this.scene.background, 2700, 6600);
 
     this.camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 2, 14000);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -112,10 +143,17 @@ export class View {
     this.controls.screenSpacePanning = false;
     this.fitCamera();
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x6b7a5a, 1.7);
+    const hemi = new THREE.HemisphereLight(0xe1efff, 0x8b7c50, 1.5);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff3df, 1.7);
-    sun.position.set(-1200, 2200, 900);
+    const sun = new THREE.DirectionalLight(0xffecd0, 2.15);
+    sun.position.set(-1550, 1700, 1000);
+    sun.castShadow = true;
+    Object.assign(sun.shadow.camera, { left: -1900, right: 1900, top: 1900, bottom: -1900, near: 10, far: 5400 });
+    sun.shadow.camera.updateProjectionMatrix();
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.00015;
+    sun.shadow.normalBias = 1.5;
+    this.renderer.shadowMap.needsUpdate = true;
     this.scene.add(sun);
     this.hemi = hemi; this.sun = sun;
 
@@ -134,7 +172,7 @@ export class View {
     const f = Math.max(1, 1.2 / a);
     this.camera.aspect = a;
     this.controls.target.set(0, 0, -40);
-    this.camera.position.set(0, 1900 * f, 1500 * f);
+    this.camera.position.set(-345 * f, 2240 * f, 1800 * f);
     this.camera.lookAt(this.controls.target);
     this.camera.updateProjectionMatrix();
   }
@@ -166,8 +204,9 @@ export class View {
     const m = this.model, L = m.layout, S = this.scene, B = L.bounds;
     const lam = (color) => new THREE.MeshLambertMaterial({ color });
     // Ground outside the park, then the park itself.
-    const base = new THREE.Mesh(new THREE.BoxGeometry(B.x1 - B.x0 + 40, 4, B.y1 - B.y0 + 40), lam('#b8b4aa'));
-    base.position.y = -4.2;
+    const base = new THREE.Mesh(new THREE.BoxGeometry(B.x1 - B.x0 + 40, 12, B.y1 - B.y0 + 40), lam('#a5a18d'));
+    base.position.y = -8.2;
+    base.receiveShadow = true;
     S.add(base);
     // The park ground has the lake cut out so the water shows through.
     const lakeHoles = L.lake.polygons.map((poly) => poly[0]);
@@ -175,10 +214,12 @@ export class View {
     S.add(flatMesh(L.other.plantings, lam(COLORS.planting), 0.3));
     S.add(flatMesh(L.other.water, lam(COLORS.water), 0.1));
     const bld = flatMesh(L.other.buildings, lam(COLORS.building), 0, 14);
+    bld.castShadow = true;
     S.add(bld);
 
     S.add(flatMesh(L.lake.polygons, lam(COLORS.lakeBed), -3.9));
-    this.lakeWater = flatMesh(L.lake.polygons, new THREE.MeshPhongMaterial({ color: COLORS.water, transparent: true, opacity: 0.9, shininess: 80, specular: 0x99bbdd }), waterY(-2));
+    this.lakeTime = { value: 0 };
+    this.lakeWater = flatMesh(L.lake.polygons, lakeMaterial(this.lakeTime), waterY(-2));
     this.lakeWater.userData.ref = { kind: 'lake', id: 'lake' };
     S.add(this.lakeWater);
     this.pickables.push(this.lakeWater);
@@ -363,26 +404,46 @@ export class View {
     const bp = this.buildingPos;
     const trees = this.model.layout.trees.filter(([x, y, r]) => Math.hypot(x - bp.x, y - bp.y) > 18 + r * 0.6);
     const rand = G.mulberry32(42);
-    const trunkGeo = new THREE.CylinderGeometry(0.5, 0.8, 1, 5);
-    const crownGeo = new THREE.IcosahedronGeometry(1, 0);
-    const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial({ color: '#5b4330' }), trees.length);
-    const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshLambertMaterial({ color: '#ffffff', flatShading: true }), trees.length);
-    const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), E = new THREE.Euler();
-    const cA = c3('#2f6a35'), cB = c3('#5a9446'), tmp = new THREE.Color();
-    trees.forEach(([x, y, r], i) => {
-      const h = 14 + r * 1.3 + rand() * 6;
-      const cr = Math.max(5, r * 0.8);
-      M.compose(w(x, y, h * 0.3), Q, V.set(1.6, h * 0.6, 1.6)); trunks.setMatrixAt(i, M);
-      Q.setFromEuler(E.set(0, rand() * 6, 0));
-      M.compose(w(x, y, h * 0.6 + cr * 0.4), Q, V.set(cr, cr * 0.8, cr)); crowns.setMatrixAt(i, M);
-      Q.identity();
-      crowns.setColorAt(i, tmp.copy(cA).lerp(cB, rand()));
+    const trunkGeo = new THREE.CylinderGeometry(0.45, 0.8, 1, 6);
+    const crownGeo = new THREE.IcosahedronGeometry(1, 1);
+    const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial({ color: '#69513b' }), trees.length);
+    const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshLambertMaterial({ flatShading: true }), trees.length * 4);
+    crowns.castShadow = true;
+    crowns.receiveShadow = true;
+    const matrix = new THREE.Matrix4(), rotation = new THREE.Quaternion();
+    const size = new THREE.Vector3(), angles = new THREE.Euler();
+    const greens = ['#31583a', '#3c693b', '#50743e', '#65834a', '#788e45'].map(c3);
+    const color = new THREE.Color();
+    trees.forEach(([x, y, radius], i) => {
+      const height = 15 + radius * (1.2 + rand() * 0.55);
+      const spread = Math.max(5, radius * (0.68 + rand() * 0.22));
+      const green = greens[Math.floor(rand() * greens.length)];
+      rotation.identity();
+      matrix.compose(w(x, y, height * 0.35), rotation, size.set(1.6, height * 0.7, 1.6));
+      trunks.setMatrixAt(i, matrix);
+      const bearing = rand() * Math.PI * 2;
+      for (let lobe = 0; lobe < 4; lobe++) {
+        const central = lobe === 0;
+        const angle = bearing + lobe * Math.PI * 2 / 3;
+        const offset = central ? 0 : spread * 0.53;
+        const width = spread * (central ? 0.78 : 0.53 + rand() * 0.15);
+        const top = height * (central ? 0.94 : 0.67 + rand() * 0.17);
+        rotation.setFromEuler(angles.set(rand() * 0.4, angle, rand() * 0.4));
+        matrix.compose(w(x + Math.cos(angle) * offset, y + Math.sin(angle) * offset, top),
+          rotation, size.set(width, width * (0.77 + rand() * 0.47), width));
+        const index = i * 4 + lobe;
+        crowns.setMatrixAt(index, matrix);
+        crowns.setColorAt(index, color.copy(green).offsetHSL(0, 0, (rand() - 0.5) * 0.09));
+      }
     });
     this.trees = new THREE.Group();
     this.trees.add(trunks, crowns);
     this.scene.add(this.trees);
   }
-  setTreesVisible(v) { this.trees.visible = v; }
+  setTreesVisible(v) {
+    this.trees.visible = v;
+    this.renderer.shadowMap.needsUpdate = true;
+  }
 
   // Fences are instanced: posts and two rails per intact segment, red cones
   // at both ends of a broken one, and an invisible box per segment for clicks.
@@ -453,11 +514,14 @@ export class View {
     const S = this.scene, L = this.model.layout, B = L.bounds;
     // Duckweed cells.
     const cells = L.grid.cells;
-    const plane = new THREE.PlaneGeometry(L.grid.CELL, L.grid.CELL);
-    plane.rotateX(-Math.PI / 2);
-    this.duck = new THREE.InstancedMesh(plane, new THREE.MeshLambertMaterial({ color: '#ffffff' }), cells.length);
+    const patch = new THREE.CircleGeometry(L.grid.CELL * 0.59, 9);
+    patch.rotateX(-Math.PI / 2);
+    this.duck = new THREE.InstancedMesh(patch, new THREE.MeshLambertMaterial({ color: '#ffffff', polygonOffset: true, polygonOffsetFactor: -1 }), cells.length);
     const rand = G.mulberry32(9), col = new THREE.Color();
-    cells.forEach((c, i) => this.duck.setColorAt(i, col.set(COLORS.duckweed).offsetHSL((rand() - 0.5) * 0.04, 0, (rand() - 0.5) * 0.08)));
+    this.duckOffsets = cells.map((_, i) => {
+      this.duck.setColorAt(i, col.set(COLORS.duckweed).offsetHSL((rand() - 0.5) * 0.04, 0, (rand() - 0.5) * 0.1));
+      return [(rand() - 0.5) * L.grid.CELL * 0.44, (rand() - 0.5) * L.grid.CELL * 0.44];
+    });
     this.duck.renderOrder = 1;
     S.add(this.duck);
 
@@ -624,7 +688,8 @@ export class View {
     const wet = rain === 'heavy' ? 1 : rain === 'light' ? 0.5 : 0;
     this.scene.background.copy(this.sky.dry).lerp(this.sky.wet, wet);
     this.scene.fog.color.copy(this.scene.background);
-    this.sun.intensity = 1.7 - wet * 0.8;
+    this.sun.intensity = 2.15 - wet * 1.15;
+    this.lakeTime.value = (this.lakeTime.value + dt) % 10000;
 
     // Lawns: grass color by height, brown wear patches, hatching for closed/reseeding.
     const short = c3(COLORS.grassShort), tall = c3(COLORS.grassTall);
@@ -665,13 +730,14 @@ export class View {
     this.lakeWater.position.y += (wy - this.lakeWater.position.y) * (1 - Math.exp(-dt * 6));
     const lakeY = this.lakeWater.position.y;
 
-    // Duckweed: each cell is a green tile sized by its cover.
+    // Duckweed: each cell is drawn as a patch sized by its cover.
     const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), P = new THREE.Vector3();
     const cells = m.layout.grid.cells;
     for (let i = 0; i < cells.length; i++) {
       const v = m.duckweed[i];
       const s = v < 1 ? 0.0001 : 0.12 + 0.9 * Math.sqrt(v / 100);
-      M4.compose(P.set(cells[i].x, lakeY + 0.05, -cells[i].y), Q, V.set(s, 1, s));
+      const [dx, dz] = this.duckOffsets[i];
+      M4.compose(P.set(cells[i].x + dx, lakeY + 0.05, -cells[i].y + dz), Q, V.set(s, 1, s));
       this.duck.setMatrixAt(i, M4);
     }
     this.duck.instanceMatrix.needsUpdate = true;

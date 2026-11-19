@@ -242,12 +242,20 @@ function renderVisitors() {
 }
 
 let treesBeforeOverlay = null;
+let lastPerception = null;
 function setOverlay(mode) {
   view.knowledge.setMode(mode);
   // Maps read better from above without the tree canopy.
   if (mode !== 'off' && treesBeforeOverlay === null) { treesBeforeOverlay = view.trees.visible; view.setTreesVisible(false); }
   if (mode === 'off' && treesBeforeOverlay !== null) { view.setTreesVisible(treesBeforeOverlay); treesBeforeOverlay = null; }
   $('btn-trees').classList.toggle('on', view.trees.visible);
+  const perceiving = mode !== 'off';
+  $('stage-explore').classList.toggle('on', !perceiving);
+  $('stage-perceive').classList.toggle('on', perceiving);
+  $('stage-explore').setAttribute('aria-pressed', String(!perceiving));
+  $('stage-perceive').setAttribute('aria-pressed', String(perceiving));
+  $('perceive-controls').hidden = !perceiving;
+  if (perceiving) lastPerception = mode;
   $('overlay').value = mode;
   $('overlay-key').innerHTML = {
     agent: `Dark: unknown to them · <i style="background:#dc3c3c"></i>blocked · <i style="background:#3c82eb"></i>water · <i style="background:#ffe65a"></i>in view now. Pins are their landmarks: ${Object.entries(LANDMARK_COLORS).map(([k, c]) => `<i style="background:${c}"></i>${k}`).join(' ')}. An × marks another agent where they last saw it.`,
@@ -344,6 +352,8 @@ const designer = setupDesigner({
   },
 });
 $('overlay').innerHTML = Object.entries(OVERLAYS).map(([k, t]) => `<option value="${k}">${t}</option>`).join('');
+$('stage-explore').addEventListener('click', () => setOverlay('off'));
+$('stage-perceive').addEventListener('click', () => setOverlay(lastPerception || (selected()?.mind ? 'agent' : 'shared')));
 $('overlay').addEventListener('change', (ev) => setOverlay(ev.target.value));
 
 // ---------- robot center monitor ----------
@@ -403,7 +413,7 @@ canvas.addEventListener('pointerup', (ev) => {
   if (ref && ref.monitor) setMonitor(true);
 });
 window.addEventListener('keydown', (ev) => {
-  if (ev.target.tagName === 'INPUT') return;
+  if (ev.target.matches('input, select, button, summary') && ev.key !== 'Escape') return;
   if (ev.key === 'f' && selected()) { const e = selected(); const p = e.anchor || e.position || e; view.focus(p.x, p.y); }
   if (ev.key === ' ') { ev.preventDefault(); run('play'); }
   if (ev.key === 'Escape') {
@@ -428,7 +438,7 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 renderStatus(); renderLog(); updateButtons();
-if (window.innerWidth > 760) $('legend').querySelector('details').open = true;
+renderInspector();
 
 $('loading').remove();
 requestAnimationFrame(frame);

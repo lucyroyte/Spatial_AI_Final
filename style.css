@@ -245,3 +245,42 @@ details.more .menu p { margin: 0; font-size: 11px; }
 @media (max-width: 760px) {
   .sheet { top: 6px; max-height: calc(100vh - 12px); }
 }
+
+/* Warm, compact controls over the daylight park. */
+:root {
+  --panel: rgba(252, 250, 242, 0.96);
+  --border: rgba(50, 68, 44, 0.19);
+  --text: #223526;
+  --muted: #536452;
+  --accent: #285b41;
+  --btn: #f4f2e8;
+  --btn-hover: #e9ecdc;
+  --shadow: 0 8px 28px rgba(43, 58, 38, 0.14);
+  --bg: #e6ede5;
+  --walking: #1757d2; --standing: #3982ed; --sitting: #4ebcf6; --boating: #9bdcff;
+  --mower: #df5719; --steward: #f78336; --skimmer: #ffb05f;
+}
+
+#toolbar { top: 16px; left: 16px; right: 16px; gap: 8px 16px; padding: 10px 14px; border-radius: 14px; }
+.brand { margin-right: auto; }
+.brand strong { font: 600 25px/1.05 Georgia, serif; letter-spacing: -0.025em; }
+.brand span { margin-top: 3px; }
+.stages { display: flex; gap: 4px; }
+.stages button { padding: 7px 12px; font-weight: 650; }
+#btn-design:not(.on) { background: var(--btn); color: var(--text); border-color: var(--border); }
+#inspector.empty { display: none; }
+#status { width: min(300px, calc(100vw - 32px)); left: 16px; bottom: 16px; }
+#legend { right: 16px; bottom: 16px; }
+.park-report { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 6px; }
+.park-report summary { cursor: pointer; font-weight: 650; }
+.map-label { font-family: Georgia, serif; color: #23382b; background: rgba(252, 250, 242, 0.93); }
+
+@media (max-width: 760px) {
+  #toolbar { top: 8px; left: 8px; right: 8px; max-height: none; overflow: visible; gap: 7px 9px; padding: 8px; }
+  .brand { width: 100%; }
+  .brand strong { font-size: 22px; }
+  .stages button { padding: 5px 8px; }
+  details.more { position: static; }
+  details.more .menu { right: 0; width: min(560px, 100%); max-height: 50vh; overflow: auto; }
+  #status { left: 8px; bottom: 8px; }
+}

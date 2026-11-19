@@ -2,7 +2,7 @@
 // the trail of where it has been, its task and its battery. The same drawing
 // shows on the screen on the building's wall and in the monitor panel.
 
-export const ROBOT_COLORS = { mower: '#f97316', steward: '#2dd4bf', skimmer: '#facc15' };
+export const ROBOT_COLORS = { mower: '#ef621d', steward: '#ff903d', skimmer: '#ffbd78' };
 
 const baseCache = new Map();
 
