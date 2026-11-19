@@ -17,11 +17,13 @@ export const COLORS = {
   mower: '#df5719', steward: '#f78336', skimmer: '#ffb05f',
   litter: ['#ff2bd6', '#ffe600', '#00e5ff', '#ff4d4d'], poop: '#5b3a1e', hole: '#3b2a1a',
   grassShort: '#adc26c', grassTall: '#35613a', worn: '#8a6a3f', straw: '#e6d6a2',
-  leafLitter: '#7a5a3a', weeds: '#7ba644', path: '#dccfb2', meadow: '#869d60', planting: '#688653',
+  leafLitter: '#8d8762', weeds: '#7f9a52', path: '#dccfb2', meadow: '#869d60', planting: '#688653',
   building: '#b9b2a6', lakeBed: '#2d5560', water: '#3e8587', duckweed: '#789e53', select: '#22d3ee',
   standing_water: '#2f80ed', fenceWood: '#9a6b3f', broken: '#e11d48', pad: '#334155',
 };
 const c3 = (hex) => new THREE.Color(hex);
+// Halo colors under agents: visitors blue, robots orange, matching their bodies.
+const HALO_COLORS = { visitor: '#2563eb', robot: '#f06a1d' };
 
 const NOISE = /* glsl */ `
 float hash(vec2 p){ p = fract(p*vec2(123.34, 456.21)); p += dot(p, p+45.32); return fract(p.x*p.y); }
@@ -217,17 +219,35 @@ export class View {
     const o = new CSS2DObject(el);
     o.position.copy(pos);
     this.scene.add(o);
+    // Status badges outrank place names, and small labels give way to both.
+    const priority = cls.includes('badge') ? 3 : cls.includes('small') ? 1 : 2;
+    (this.mapLabels ||= []).push({ o, el, priority });
     return o;
+  }
+
+  // Hides any map label that would overlap a higher-priority one on screen.
+  // CSS2DRenderer owns each element's display, so this uses visibility.
+  declutterLabels() {
+    const kept = [];
+    const items = this.mapLabels.filter((l) => l.o.visible && l.el.style.display !== 'none' && l.el.textContent);
+    items.sort((a, b) => b.priority - a.priority);
+    for (const l of this.mapLabels) if (!items.includes(l)) l.el.style.visibility = '';
+    for (const l of items) {
+      l.el.style.visibility = '';
+      const r = l.el.getBoundingClientRect();
+      const hit = kept.some((k) => r.left < k.right + 4 && r.right > k.left - 4 && r.top < k.bottom + 3 && r.bottom > k.top - 3);
+      if (hit) l.el.style.visibility = 'hidden';
+      else kept.push(r);
+    }
   }
 
   // ---------- static scene ----------
   buildStatic() {
     const m = this.model, L = m.layout, S = this.scene, B = L.bounds;
     const lam = (color) => new THREE.MeshLambertMaterial({ color });
-    // Ground outside the park, then the park itself.
-    const base = new THREE.Mesh(new THREE.BoxGeometry(B.x1 - B.x0 + 40, 12, B.y1 - B.y0 + 40), lam('#a5a18d'));
-    base.position.y = -8.2;
-    base.receiveShadow = true;
+    // The model's base: a 12 ft slab cut to the park outline, then the park itself.
+    // Its top stays below the lake bed (-3.9) so the water shows through.
+    const base = flatMesh(L.other.park.map(([outer]) => [outer]), lam('#a5a18d'), -16.2, 12);
     S.add(base);
     // The park ground has the lake cut out so the water shows through.
     const lakeHoles = L.lake.polygons.map((poly) => poly[0]);
@@ -265,7 +285,9 @@ export class View {
       rope.visible = false;
       S.add(rope);
       mesh.userData.rope = rope;
-      mesh.userData.badge = this.label('', w(l.anchor.x, l.anchor.y - 22, 8), 'map-badge');
+      mesh.userData.badge = this.label('', w(l.anchor.x, l.anchor.y, 3), 'map-badge');
+      mesh.userData.badge.center.set(0.5, -0.9); // just below the lawn's name
+      mesh.userData.badge.visible = false;
     }
     {
       const mat = patchMaterial();
@@ -687,13 +709,32 @@ export class View {
     const S = this.scene, L = this.model.layout, B = L.bounds;
     // Duckweed cells.
     const cells = L.grid.cells;
-    const patch = new THREE.CircleGeometry(L.grid.CELL * 0.59, 9);
+    // Each cell is a clump that overlaps its neighbours and is turned and
+    // stretched at random, so covered water reads as irregular mats, not a dot grid.
+    const patch = new THREE.PlaneGeometry(L.grid.CELL * 1.7, L.grid.CELL * 1.7);
     patch.rotateX(-Math.PI / 2);
-    this.duck = new THREE.InstancedMesh(patch, new THREE.MeshLambertMaterial({ color: '#ffffff', polygonOffset: true, polygonOffsetFactor: -1 }), cells.length);
-    const rand = G.mulberry32(9), col = new THREE.Color();
+    // The texture is a clump of small fronds, denser in the middle: irregular
+    // mats from afar, individual leaves up close.
+    const soft = document.createElement('canvas');
+    soft.width = soft.height = 128;
+    const sctx = soft.getContext('2d');
+    const frond = G.mulberry32(21);
+    for (let k = 0; k < 90; k++) {
+      const a = frond() * Math.PI * 2, r = Math.sqrt(frond()) * 50;
+      const x = 64 + Math.cos(a) * r, y = 64 + Math.sin(a) * r;
+      sctx.fillStyle = `rgba(255,255,255,${(0.95 - r / 70).toFixed(2)})`;
+      sctx.beginPath();
+      sctx.ellipse(x, y, 3 + frond() * 5, 2.5 + frond() * 4, frond() * Math.PI, 0, Math.PI * 2);
+      sctx.fill();
+    }
+    this.duck = new THREE.InstancedMesh(patch, new THREE.MeshLambertMaterial({
+      color: '#ffffff', map: new THREE.CanvasTexture(soft), transparent: true, opacity: 0.85, depthWrite: false,
+    }), cells.length);
+    const rand = G.mulberry32(9), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
     this.duckOffsets = cells.map((_, i) => {
-      this.duck.setColorAt(i, col.set(COLORS.duckweed).offsetHSL((rand() - 0.5) * 0.04, 0, (rand() - 0.5) * 0.1));
-      return [(rand() - 0.5) * L.grid.CELL * 0.44, (rand() - 0.5) * L.grid.CELL * 0.44];
+      this.duck.setColorAt(i, col.set(COLORS.duckweed).offsetHSL((rand() - 0.5) * 0.05, -0.08, (rand() - 0.5) * 0.08));
+      const q = new THREE.Quaternion().setFromAxisAngle(up, rand() * Math.PI);
+      return [(rand() - 0.5) * L.grid.CELL * 0.6, (rand() - 0.5) * L.grid.CELL * 0.6, q, 0.75 + rand() * 0.6];
     });
     this.duck.renderOrder = 1;
     S.add(this.duck);
@@ -728,6 +769,26 @@ export class View {
     this.showTrails = false;
 
     // Selection marker.
+    {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const x = c.getContext('2d');
+      const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+      g.addColorStop(0, 'rgba(255,255,255,0.95)');
+      g.addColorStop(0.5, 'rgba(255,255,255,0.8)');
+      g.addColorStop(0.62, 'rgba(255,255,255,0.35)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = g;
+      x.fillRect(0, 0, 64, 64);
+      const disc = new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2);
+      this.halos = new THREE.InstancedMesh(disc, new THREE.MeshBasicMaterial({
+        map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, depthTest: false,
+      }), 800);
+      this.halos.renderOrder = 4;
+      this.halos.frustumCulled = false;
+      this.halos.count = 0;
+      S.add(this.halos);
+    }
     this.selRing = new THREE.Mesh(new THREE.RingGeometry(2.4, 3.1, 32), new THREE.MeshBasicMaterial({ color: COLORS.select, side: THREE.DoubleSide, depthTest: false, transparent: true }));
     this.selRing.rotation.x = -Math.PI / 2;
     this.selRing.renderOrder = 5;
@@ -902,9 +963,11 @@ export class View {
       if (l.status === 'reseeding') badges.push(l.pendingReseed ? 'Closing to reseed' : `Reseeding · ${l.reseedTimer}m`);
       if (l.wear > RULES.NEEDS_RESEEDING && l.status !== 'reseeding') badges.push('Reseed');
       if (l.grassHeight > RULES.NEEDS_MOWING && l.status !== 'reseeding') badges.push('Mow');
-      const el = mesh.userData.badge.element;
-      el.textContent = badges.join(' · ');
-      el.style.display = badges.length ? '' : 'none';
+      // CSS2DRenderer sets display from visible each frame, so an empty badge
+      // must be hidden through visible (it was showing as a small yellow bar).
+      const badge = mesh.userData.badge;
+      badge.element.textContent = badges.join(' · ');
+      badge.visible = badges.length > 0;
     }
     const wu = this.regionMeshes.woods.material.userData.u;
     wu.uAmount.value = 0.08 + (m.woods.weedCover / 100) * 0.9;
@@ -925,9 +988,9 @@ export class View {
     const cells = m.layout.grid.cells;
     for (let i = 0; i < cells.length; i++) {
       const v = m.duckweed[i];
-      const s = v < 1 ? 0.0001 : 0.12 + 0.9 * Math.sqrt(v / 100);
-      const [dx, dz] = this.duckOffsets[i];
-      M4.compose(P.set(cells[i].x + dx, lakeY + 0.05, -cells[i].y + dz), Q, V.set(s, 1, s));
+      const s = v < 1 ? 0.0001 : 0.15 + 0.85 * Math.sqrt(v / 100);
+      const [dx, dz, q, stretch] = this.duckOffsets[i];
+      M4.compose(P.set(cells[i].x + dx, lakeY + 0.05, -cells[i].y + dz), q, V.set(s * stretch, 1, s / stretch));
       this.duck.setMatrixAt(i, M4);
     }
     this.duck.instanceMatrix.needsUpdate = true;
@@ -1025,11 +1088,38 @@ export class View {
     }
     for (const [id, o] of this.meshes) if (!alive.has(id)) { this.scene.remove(o); this.meshes.delete(id); }
 
+    this.updateHalos(camDist);
+    this.labelClock = (this.labelClock || 0) + dt;
+    if (this.labelClock > 0.15) { this.labelClock = 0; this.declutterLabels(); }
     this.updateLines(lakeY, selection);
     this.updateTrails(lakeY);
     this.updateScreen(dt);
     this.knowledge.update(dt, selection, this.entityScale);
     this.updateSelection(selection, lakeY);
+  }
+
+  // Halos grow with camera distance (about 12 px on screen) and fade out up
+  // close, where the figures themselves are readable.
+  updateHalos(camDist) {
+    const m = this.model;
+    const radius = THREE.MathUtils.clamp(camDist * 0.005, 1.6, 18);
+    const fade = THREE.MathUtils.clamp((camDist - 260) / 500, 0, 1);
+    this.halos.material.opacity = 0.25 + 0.65 * fade;
+    const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(radius, 1, radius), P = new THREE.Vector3();
+    const visitor = c3(HALO_COLORS.visitor), robot = c3(HALO_COLORS.robot);
+    let n = 0;
+    const put = (id, color) => {
+      const o = this.meshes.get(id);
+      if (!o || n >= this.halos.instanceMatrix.count) return;
+      M4.compose(P.set(o.position.x, o.position.y + 0.3, o.position.z), Q, V);
+      this.halos.setMatrixAt(n, M4);
+      this.halos.setColorAt(n++, color);
+    };
+    for (const p of m.people) put(p.id, visitor);
+    for (const list of [m.mowers, m.stewards, m.skimmers]) for (const r of list) put(r.id, robot);
+    this.halos.count = n;
+    this.halos.instanceMatrix.needsUpdate = true;
+    if (this.halos.instanceColor) this.halos.instanceColor.needsUpdate = true;
   }
 
   updateLines(lakeY, selection) {
