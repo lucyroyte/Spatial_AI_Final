@@ -532,9 +532,21 @@ export class View {
   }
 
   buildTrees() {
-    // Leave room for the robot center building.
-    const bp = this.buildingPos;
-    const trees = this.model.layout.trees.filter(([x, y, r]) => Math.hypot(x - bp.x, y - bp.y) > 18 + r * 0.6);
+    const layout = this.model.layout;
+    const pathDistance = layout.distanceField((cell) => layout.regionOfCell(cell)?.kind === 'path');
+    const keepTree = G.mulberry32(73);
+    // Open up sightlines at paths and the landing while keeping the woods continuous.
+    const trees = layout.trees.filter(([x, y, radius]) => {
+      const chance = keepTree();
+      const point = { x, y };
+      const cell = layout.cellAt(point);
+      const kind = layout.regionOfCell(cell)?.kind;
+      if (G.dist(point, this.buildingPos) < 18 + radius * 0.6) return false;
+      if (kind === 'path' || kind === 'lawn' || kind === 'lake') return false;
+      if (G.dist(point, layout.landing.position) < 150) return chance < 0.25;
+      if (pathDistance[cell] * layout.cell < radius + 12) return chance < 0.32;
+      return chance < (kind === 'woods' ? 0.76 : 0.48);
+    });
     const rand = G.mulberry32(42);
     const trunkGeo = new THREE.CylinderGeometry(0.45, 0.8, 1, 6);
     const crownGeo = new THREE.IcosahedronGeometry(1, 1);
